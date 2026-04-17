@@ -34,3 +34,5 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+luego arriba muestrame un resumen de, cuanto tiempo en total planeo dedicar a tareas y cuanto planeo a cada habito, colocas un punto con su color, su nombre, las horas y minutos (en el caso de las tareas que sea un punto azul y que diga work)
