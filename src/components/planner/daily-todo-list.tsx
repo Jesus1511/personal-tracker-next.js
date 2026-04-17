@@ -42,18 +42,20 @@ function focusClock(iso: string) {
   });
 }
 
-/** Opciones del modal de enfoque: solo filas ya sincronizadas en Supabase (sin llamar a Rize). */
+/** Opciones del modal de enfoque: solo bloques vinculados a una entrada Rize (id no nulo). */
 function actualTaskBlocksToFocusOptions(blocks: ActualTaskBlock[]): RizeTimeEntryOption[] {
-  return blocks.map((b) => {
-    const ms = new Date(b.end_at).getTime() - new Date(b.start_at).getTime();
-    return {
-      id: b.rize_entry_id,
-      title: b.rize_title?.trim() || "Sin título",
-      startTime: b.start_at,
-      endTime: b.end_at,
-      durationSeconds: Math.max(0, Math.round(ms / 1000)),
-    };
-  });
+  return blocks
+    .filter((b): b is ActualTaskBlock & { rize_entry_id: string } => b.rize_entry_id != null)
+    .map((b) => {
+      const ms = new Date(b.end_at).getTime() - new Date(b.start_at).getTime();
+      return {
+        id: b.rize_entry_id,
+        title: b.rize_title?.trim() || "Sin título",
+        startTime: b.start_at,
+        endTime: b.end_at,
+        durationSeconds: Math.max(0, Math.round(ms / 1000)),
+      };
+    });
 }
 
 export function DailyTodoList({

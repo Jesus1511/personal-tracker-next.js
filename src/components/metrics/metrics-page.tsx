@@ -19,6 +19,11 @@ import {
 
 import { localDateString } from "@/lib/planner/date";
 
+function formatTooltipNumber(value: unknown, suffix: string): string {
+  const n = typeof value === "number" ? value : Number(value);
+  return `${Number.isFinite(n) ? n : 0}${suffix}`;
+}
+
 type MetricsResponse = {
   range: { start: string; end: string };
   pointsByDay: { date: string; planned: number; completed: number }[];
@@ -236,7 +241,7 @@ export function MetricsPage() {
                     <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" strokeOpacity={0.4} horizontal={false} />
                     <XAxis type="number" domain={[0, 100]} fontSize={10} />
                     <YAxis type="category" dataKey="name" width={110} fontSize={11} />
-                    <Tooltip contentStyle={tooltipStyle} formatter={(v: number) => `${v}%`} />
+                    <Tooltip contentStyle={tooltipStyle} formatter={(value) => formatTooltipNumber(value, "%")} />
                     <Bar dataKey="adherence" name="Adherencia" radius={[0, 4, 4, 0]}>
                       {data.habitAdherence.map((h, i) => (
                         <Cell key={h.habitTypeId} fill={h.color ?? TASK_TYPE_FALLBACK_PALETTE[i % TASK_TYPE_FALLBACK_PALETTE.length]} />
@@ -283,7 +288,7 @@ export function MetricsPage() {
                   <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" strokeOpacity={0.4} />
                   <XAxis dataKey="date" tickFormatter={shortDate} fontSize={10} />
                   <YAxis fontSize={10} />
-                  <Tooltip contentStyle={tooltipStyle} formatter={(v: number) => `${v}h`} />
+                  <Tooltip contentStyle={tooltipStyle} formatter={(value) => formatTooltipNumber(value, "h")} />
                   <Legend wrapperStyle={{ fontSize: 12 }} />
                   <Bar dataKey="plannedHours" name="Planificado" fill="#94a3b8" radius={[3, 3, 0, 0]} />
                   <Bar dataKey="actualHours" name="Real" fill="#8b5cf6" radius={[3, 3, 0, 0]} />
@@ -317,7 +322,7 @@ export function MetricsPage() {
                         />
                       ))}
                     </Pie>
-                    <Tooltip contentStyle={tooltipStyle} formatter={(v: number) => `${v}h`} />
+                    <Tooltip contentStyle={tooltipStyle} formatter={(value) => formatTooltipNumber(value, "h")} />
                   </PieChart>
                 </ResponsiveContainer>
               )}

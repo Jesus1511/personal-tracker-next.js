@@ -8,6 +8,7 @@ import {
   ANALYZABLE_TABLES,
   type AnalysisRecord,
   type AnalyzableTable,
+  type PromptType,
 } from "@/lib/gemini/types";
 import { localDateString } from "@/lib/planner/date";
 
@@ -62,6 +63,12 @@ const STATUS_LABELS: Record<string, { text: string; cls: string }> = {
     cls: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400",
   },
 };
+
+const PROMPT_OPTIONS: { key: PromptType; label: string }[] = [
+  { key: "summary", label: "Resumen" },
+  { key: "recommendations", label: "Recomendaciones" },
+  { key: "custom", label: "Personalizado" },
+];
 
 /* ------------------------------------------------------------------ */
 /*  Component                                                         */
