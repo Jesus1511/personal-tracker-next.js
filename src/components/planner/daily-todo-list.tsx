@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { plannerTintBackground } from "@/lib/planner/color-tint";
-import { localDateString } from "@/lib/planner/date";
+import { addCalendarDays, localDateString } from "@/lib/planner/date";
 import { isTempId } from "@/lib/planner/temp-id";
 
 import { KeepColorPickerDropdown } from "./keep-color-swatch";
@@ -26,13 +26,24 @@ type Props = {
   /** Registra avance parcial sin vincular a un bloque Rize. */
   onCompleteTaskPartial: (task: TaskItem, pointsCompleted: number) => Promise<void>;
   onDeleteTask: (id: string) => Promise<void>;
+  /** Crea copia en scheduled_date+1 con parent_task_id; el origen sigue pendiente. */
+  onCarryTaskToNextDay: (task: TaskItem) => Promise<void>;
   onReorderTasks: (orderedIds: string[]) => Promise<void>;
-  onCreateTaskType: (input: { name: string; color: string | null }) => Promise<void>;
-  onPatchTaskType: (id: string, input: { name?: string; color?: string | null }) => Promise<void>;
+  onCreateTaskType: (input: { name: string; color: string | null; contributesToMain?: boolean }) => Promise<void>;
+  onPatchTaskType: (id: string, input: { name?: string; color?: string | null; contributesToMain?: boolean }) => Promise<void>;
   onDeleteTaskType: (id: string) => Promise<void>;
 };
 
 const DAILY_POINTS = 10;
+
+function nextDayShortLabel(scheduledDate: string) {
+  const next = addCalendarDays(String(scheduledDate).slice(0, 10), 1);
+  return new Date(`${next}T12:00:00`).toLocaleDateString("es", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+  });
+}
 
 function focusClock(iso: string) {
   return new Date(iso).toLocaleTimeString(undefined, {
@@ -70,6 +81,7 @@ export function DailyTodoList({
   onCompleteTaskWithFocus,
   onCompleteTaskPartial,
   onDeleteTask,
+  onCarryTaskToNextDay,
   onReorderTasks,
   onCreateTaskType,
   onPatchTaskType,
@@ -85,6 +97,8 @@ export function DailyTodoList({
   const typeMenuRef = useRef<HTMLDivElement>(null);
   const [openPointsFor, setOpenPointsFor] = useState<string | null>(null);
   const pointsMenuRef = useRef<HTMLDivElement>(null);
+  const [openTaskMenuFor, setOpenTaskMenuFor] = useState<string | null>(null);
+  const taskMenuRef = useRef<HTMLDivElement>(null);
 
   /** Per-task edit drafts, keyed by task ID. Only populated while the user is editing. */
   const [editDrafts, setEditDrafts] = useState<Record<string, string>>({});
@@ -102,10 +116,7 @@ export function DailyTodoList({
   /** Puntos a imputar en este bloque. Por defecto, los restantes de la tarea. */
   const [focusPointsToAdd, setFocusPointsToAdd] = useState(1);
 
-  const isPastDay = useMemo(() => {
-    const today = localDateString();
-    return selectedDate < today;
-  }, [selectedDate]);
+  const isPastDay = false;
 
   const activeTasks = useMemo(() => tasks.filter((t) => !t.done), [tasks]);
   const completedTasks = useMemo(() => tasks.filter((t) => t.done), [tasks]);
@@ -294,6 +305,17 @@ export function DailyTodoList({
     return () => document.removeEventListener("mousedown", onMouseDown);
   }, [openPointsFor]);
 
+  useEffect(() => {
+    if (!openTaskMenuFor) return;
+    function onMouseDown(e: MouseEvent) {
+      if (!taskMenuRef.current?.contains(e.target as Node)) {
+        setOpenTaskMenuFor(null);
+      }
+    }
+    document.addEventListener("mousedown", onMouseDown);
+    return () => document.removeEventListener("mousedown", onMouseDown);
+  }, [openTaskMenuFor]);
+
   return (
     <section className="flex min-w-0 flex-col rounded-xl border border-zinc-200/80 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950 w-180">
       <div className="flex shrink-0 items-center justify-between gap-3">
@@ -408,6 +430,7 @@ export function DailyTodoList({
                         onClick={() => {
                           setOpenPointsFor((prev) => (prev === task.id ? null : task.id));
                           setOpenTypeMenuFor(null);
+                          setOpenTaskMenuFor(null);
                         }}
                         className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold transition-colors ${
                           pts > 0
@@ -469,6 +492,7 @@ export function DailyTodoList({
                       onClick={() => {
                         setOpenTypeMenuFor((prev) => (prev === task.id ? null : task.id));
                         setOpenPointsFor(null);
+                        setOpenTaskMenuFor(null);
                       }}
                       className={`w-30 truncate rounded-full px-2 py-0.5 text-center text-[10px] font-medium ${
                         isPastDay ? "cursor-default" : "transition-opacity hover:opacity-80"
@@ -484,6 +508,7 @@ export function DailyTodoList({
                       }
                       aria-label="Cambiar tipo de tarea"
                     >
+                      {task.task_type?.contributes_to_main && <span className="mr-0.5">★</span>}
                       {task.task_type?.name ?? "···"}
                     </button>
                     {openTypeMenuFor === task.id ? (
@@ -512,23 +537,61 @@ export function DailyTodoList({
                               className={`h-2 w-2 shrink-0 rounded-full ${tt.color ? "" : "bg-zinc-300 dark:bg-zinc-600"}`}
                               style={tt.color ? { backgroundColor: plannerTintBackground(tt.color) } : undefined}
                             />
-                            {tt.name}
+                            <span className="flex-1">{tt.name}</span>
+                            {tt.contributes_to_main && (
+                              <span className="text-violet-500 dark:text-violet-400" title="Contribuye al objetivo principal">★</span>
+                            )}
                           </button>
                         ))}
                       </div>
                     ) : null}
                   </div>
 
-                  {!isPastDay ? (
-                    <button
-                      type="button"
-                      onClick={() => void onDeleteTask(task.id)}
-                      className="shrink-0 rounded p-1 text-zinc-300 transition-colors hover:text-rose-500 sm:opacity-0 sm:group-hover:opacity-100 dark:text-zinc-600 dark:hover:text-rose-400"
-                      aria-label="Eliminar tarea"
+                  {isTempId(task.id) && isPastDay ? null : (
+                    <div
+                      ref={openTaskMenuFor === task.id ? taskMenuRef : null}
+                      className="relative shrink-0"
                     >
-                      ×
-                    </button>
-                  ) : null}
+                      <button
+                        type="button"
+                        aria-label="Más acciones"
+                        onClick={() => {
+                          setOpenTaskMenuFor((p) => (p === task.id ? null : task.id));
+                          setOpenTypeMenuFor(null);
+                          setOpenPointsFor(null);
+                        }}
+                        className="flex h-7 w-6 shrink-0 items-center justify-center rounded text-zinc-400 transition-colors hover:bg-zinc-200/80 hover:text-zinc-600 sm:opacity-0 sm:group-hover:opacity-100 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+                      >
+                        ⋮
+                      </button>
+                      {openTaskMenuFor === task.id ? (
+                        <div className="absolute right-0 top-full z-40 mt-1 min-w-[12rem] rounded-lg border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+                          {!isTempId(task.id) ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void onCarryTaskToNextDay(task).finally(() => setOpenTaskMenuFor(null));
+                              }}
+                              className="w-full px-3 py-2 text-left text-xs text-zinc-700 hover:bg-zinc-50 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                            >
+                              Pasar a {nextDayShortLabel(task.scheduled_date)}
+                            </button>
+                          ) : null}
+                          {!isPastDay ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void onDeleteTask(task.id).finally(() => setOpenTaskMenuFor(null));
+                              }}
+                              className="w-full px-3 py-2 text-left text-xs text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+                            >
+                              Eliminar
+                            </button>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
                 </li>
               );
             })}
@@ -608,14 +671,36 @@ export function DailyTodoList({
                         </span>
                       ) : null}
                       {!isPastDay ? (
-                        <button
-                          type="button"
-                          onClick={() => void onDeleteTask(task.id)}
-                          className="shrink-0 rounded p-1 text-zinc-300 transition-colors hover:text-rose-500 sm:opacity-0 sm:group-hover:opacity-100 dark:text-zinc-600 dark:hover:text-rose-400"
-                          aria-label="Eliminar tarea"
+                        <div
+                          ref={openTaskMenuFor === task.id ? taskMenuRef : null}
+                          className="relative shrink-0"
                         >
-                          ×
-                        </button>
+                          <button
+                            type="button"
+                            aria-label="Más acciones"
+                            onClick={() => {
+                              setOpenTaskMenuFor((p) => (p === task.id ? null : task.id));
+                              setOpenTypeMenuFor(null);
+                              setOpenPointsFor(null);
+                            }}
+                            className="flex h-7 w-6 shrink-0 items-center justify-center rounded text-zinc-400 transition-colors hover:bg-zinc-200/80 hover:text-zinc-600 sm:opacity-0 sm:group-hover:opacity-100 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+                          >
+                            ⋮
+                          </button>
+                          {openTaskMenuFor === task.id ? (
+                            <div className="absolute right-0 top-full z-40 mt-1 min-w-[10rem] rounded-lg border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  void onDeleteTask(task.id).finally(() => setOpenTaskMenuFor(null));
+                                }}
+                                className="w-full px-3 py-2 text-left text-xs text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+                              >
+                                Eliminar
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
                       ) : null}
                     </li>
                   );
@@ -946,6 +1031,22 @@ export function DailyTodoList({
                       size="sm"
                       align="right"
                     />
+                    <button
+                      type="button"
+                      title={taskType.contributes_to_main ? "Quitar de main" : "Contribuye al main"}
+                      onClick={() =>
+                        void onPatchTaskType(taskType.id, {
+                          contributesToMain: !taskType.contributes_to_main,
+                        })
+                      }
+                      className={`rounded px-1.5 py-0.5 text-xs transition-colors ${
+                        taskType.contributes_to_main
+                          ? "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300"
+                          : "text-zinc-400 hover:bg-zinc-100 dark:text-zinc-600 dark:hover:bg-zinc-800"
+                      }`}
+                    >
+                      ★
+                    </button>
                     <button
                       type="button"
                       onClick={() => void onDeleteTaskType(taskType.id)}

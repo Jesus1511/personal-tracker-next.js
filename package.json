@@ -7,12 +7,14 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "fix:calendar-task-links": "node scripts/fix-calendar-task-links.mjs"
+    "fix:calendar-task-links": "node scripts/fix-calendar-task-links.mjs",
+    "test:push": "node scripts/test-custom-push.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",
     "@supabase/supabase-js": "^2.103.0",
     "@tailwindcss/typography": "^0.5.19",
+    "expo-server-sdk": "^6.1.0",
     "next": "16.2.3",
     "react": "19.2.4",
     "react-dom": "19.2.4",

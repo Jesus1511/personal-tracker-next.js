@@ -1,9 +1,35 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { localDateString } from "@/lib/planner/date";
 import { isTempId, makeTempId } from "@/lib/planner/temp-id";
+
+type DailyGoal = {
+  id: string;
+  date: string;
+  title: string;
+  done: boolean;
+  task_type_id: string | null;
+  task_type?: TaskType | null;
+};
+
+function getWeekRange(date: string): { from: string; to: string; dates: string[] } {
+  const d = new Date(`${date}T00:00:00`);
+  const day = d.getDay();
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  const monday = new Date(d);
+  monday.setDate(d.getDate() + mondayOffset);
+  const dates: string[] = [];
+  for (let i = 0; i < 7; i++) {
+    const cur = new Date(monday);
+    cur.setDate(monday.getDate() + i);
+    dates.push(cur.toISOString().slice(0, 10));
+  }
+  return { from: dates[0], to: dates[6], dates };
+}
+
+const DAY_LABELS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
 
 import { DailyCalendar } from "./daily-calendar";
 import { DailyTodoList } from "./daily-todo-list";
@@ -45,6 +71,12 @@ export function PlannerPage() {
   const [loading, setLoading] = useState(true);
   const [cloningPrevDay, setCloningPrevDay] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [dailyGoal, setDailyGoal] = useState<DailyGoal | null>(null);
+  const [goalTitle, setGoalTitle] = useState("");
+  const [weekModalOpen, setWeekModalOpen] = useState(false);
+  const [weekGoals, setWeekGoals] = useState<Record<string, string>>({});
+  const [savingWeek, setSavingWeek] = useState(false);
+  const goalSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const syncAbortRef = useRef<AbortController | null>(null);
   const taskTypesRef = useRef(taskTypes);
   const habitTypesRef = useRef(habitTypes);
@@ -59,6 +91,25 @@ export function PlannerPage() {
   const abortTaskTypeCreateRef = useRef<Map<string, AbortController>>(new Map());
   const pendingHabitTypeCreatesRef = useRef<Map<string, Promise<HabitType>>>(new Map());
   const abortHabitTypeCreateRef = useRef<Map<string, AbortController>>(new Map());
+
+  const loadDailyGoal = useCallback(async (date: string) => {
+    const data = await apiRequest<{ dailyGoal: DailyGoal | null }>(
+      `/api/planner/daily-goals?date=${date}`,
+    );
+    setDailyGoal(data.dailyGoal);
+    setGoalTitle(data.dailyGoal?.title ?? "");
+  }, []);
+
+  const upsertGoal = useCallback(
+    async (date: string, patch: { title?: string; done?: boolean; taskTypeId?: string | null }) => {
+      const data = await apiRequest<{ dailyGoal: DailyGoal }>("/api/planner/daily-goals", {
+        method: "PUT",
+        body: JSON.stringify({ date, ...patch }),
+      });
+      setDailyGoal(data.dailyGoal);
+    },
+    [],
+  );
 
   async function loadTaskTypes() {
     const data = await apiRequest<{ taskTypes: TaskType[] }>("/api/planner/task-types");
@@ -81,6 +132,7 @@ export function PlannerPage() {
     setTimeBlocks(blockData.timeBlocks);
     setActualHabitBlocks(actualData.actualHabitBlocks);
     setActualTaskBlocks(actualTaskData.actualTaskBlocks);
+    await loadDailyGoal(selectedDate);
   }
 
   async function refreshAll() {
@@ -96,23 +148,8 @@ export function PlannerPage() {
   }
 
   useEffect(() => {
-    void refreshAll().then(async () => {
+    void refreshAll().then(() => {
       void syncActualTasks(selectedDate);
-      // Rollover: si el día seleccionado es "hoy", movemos tareas pendientes de días anteriores.
-      // Idempotente en servidor (no duplica hijas), así que es seguro llamarlo en cada montaje.
-      if (selectedDate === todayDate()) {
-        try {
-          const res = await apiRequest<{ createdCount: number }>("/api/planner/tasks/rollover", {
-            method: "POST",
-            body: JSON.stringify({ date: selectedDate }),
-          });
-          if (res.createdCount > 0) {
-            await loadDailyData();
-          }
-        } catch (rolloverError) {
-          console.error("Rollover failed:", rolloverError);
-        }
-      }
     });
     return () => syncAbortRef.current?.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -165,6 +202,21 @@ export function PlannerPage() {
     }
   }
 
+  // Auto-complete the daily goal when all contributing tasks finish their points
+  useEffect(() => {
+    if (!dailyGoal || dailyGoal.done || loading) return;
+    const contributing = tasks.filter((t) => t.task_type?.contributes_to_main);
+    if (contributing.length === 0) return;
+    const allDone = contributing.every((t) => {
+      const pts = t.points ?? 0;
+      return pts === 0 ? t.done : (t.points_done ?? 0) >= pts;
+    });
+    if (allDone) {
+      void upsertGoal(selectedDate, { title: goalTitle, done: true });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasks]);
+
   async function clonePreviousDay() {
     const prevDate = (() => {
       const d = new Date(selectedDate + "T00:00:00");
@@ -212,7 +264,7 @@ export function PlannerPage() {
 
   return (
     <main className="flex w-full flex-col gap-5 px-40 py-5 sm:px-6">
-      <header className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between px-20 py-5">
+      <header className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between px-20 pt-4 pb-1">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">Planner diario</h1>
           <p className="mt-0.5 text-sm text-zinc-500 dark:text-zinc-400">
@@ -250,8 +302,169 @@ export function PlannerPage() {
           >
             ›
           </button>
+          <button
+            type="button"
+            onClick={async () => {
+              const { from, to, dates } = getWeekRange(selectedDate);
+              const data = await apiRequest<{ dailyGoals: DailyGoal[] }>(
+                `/api/planner/daily-goals?from=${from}&to=${to}`,
+              );
+              const map: Record<string, string> = {};
+              for (const d of dates) map[d] = "";
+              for (const g of data.dailyGoals) map[g.date] = g.title;
+              setWeekGoals(map);
+              setWeekModalOpen(true);
+            }}
+            className="flex h-9 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-600 shadow-sm transition-colors hover:border-zinc-300 hover:text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:border-zinc-600 dark:hover:text-zinc-100"
+          >
+            <span>📅</span> Semana
+          </button>
         </div>
       </header>
+
+      {/* Main daily goal */}
+      <div className="mx-20 flex items-center gap-3 rounded-xl border border-zinc-200 bg-white px-4 py-3 shadow-sm dark:border-zinc-700 dark:bg-zinc-900">
+        <button
+          type="button"
+          aria-label={dailyGoal?.done ? "Marcar como pendiente" : "Marcar como completada"}
+          onClick={async () => {
+            const nextDone = !(dailyGoal?.done ?? false);
+            setDailyGoal((prev) => (prev ? { ...prev, done: nextDone } : null));
+            await upsertGoal(selectedDate, { title: goalTitle, done: nextDone });
+          }}
+          className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 transition-colors ${
+            dailyGoal?.done
+              ? "border-emerald-500 bg-emerald-500 text-white"
+              : "border-zinc-300 bg-transparent hover:border-emerald-400 dark:border-zinc-600"
+          }`}
+        >
+          {dailyGoal?.done && (
+            <svg viewBox="0 0 12 12" fill="none" className="h-3 w-3" stroke="currentColor" strokeWidth={2.5}>
+              <path d="M2 6l3 3 5-5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          )}
+        </button>
+        <input
+          type="text"
+          placeholder="Objetivo principal del día…"
+          value={goalTitle}
+          onChange={(e) => {
+            const v = e.target.value;
+            setGoalTitle(v);
+            if (goalSaveTimer.current) clearTimeout(goalSaveTimer.current);
+            goalSaveTimer.current = setTimeout(() => {
+              void upsertGoal(selectedDate, { title: v, done: dailyGoal?.done ?? false });
+            }, 600);
+          }}
+          className={`flex-1 bg-transparent text-lg font-semibold outline-none placeholder:font-normal placeholder:text-zinc-400 dark:placeholder:text-zinc-600 ${
+            dailyGoal?.done
+              ? "text-zinc-400 line-through dark:text-zinc-600"
+              : "text-zinc-900 dark:text-zinc-50"
+          }`}
+        />
+        {/* Category selector */}
+        <div className="relative shrink-0">
+          <select
+            value={dailyGoal?.task_type_id ?? ""}
+            onChange={async (e) => {
+              const taskTypeId = e.target.value || null;
+              setDailyGoal((prev) => prev
+                ? {
+                    ...prev,
+                    task_type_id: taskTypeId,
+                    task_type: taskTypes.find((t) => t.id === taskTypeId) ?? null,
+                  }
+                : null
+              );
+              await upsertGoal(selectedDate, { title: goalTitle, taskTypeId });
+            }}
+            className="h-7 rounded-md border border-zinc-200 bg-zinc-50 pl-2 pr-6 text-xs text-zinc-600 outline-none transition-colors hover:border-zinc-300 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400"
+          >
+            <option value="">Sin categoría</option>
+            {taskTypes.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.contributes_to_main ? "★ " : ""}{t.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {/* Week goals modal */}
+      {weekModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+          onClick={() => setWeekModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-lg rounded-2xl border border-zinc-200 bg-white p-6 shadow-2xl dark:border-zinc-700 dark:bg-zinc-900"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="mb-4 text-lg font-semibold text-zinc-900 dark:text-zinc-50">
+              Objetivos de la semana
+            </h2>
+            <div className="flex flex-col gap-2">
+              {getWeekRange(selectedDate).dates.map((date, i) => (
+                <div key={date} className="flex items-center gap-3">
+                  <span className="w-8 shrink-0 text-xs font-medium text-zinc-400 dark:text-zinc-500">
+                    {DAY_LABELS[i]}
+                  </span>
+                  <span className="w-20 shrink-0 text-xs text-zinc-400 dark:text-zinc-500">
+                    {date}
+                  </span>
+                  <input
+                    type="text"
+                    placeholder="Sin objetivo…"
+                    value={weekGoals[date] ?? ""}
+                    onChange={(e) =>
+                      setWeekGoals((prev) => ({ ...prev, [date]: e.target.value }))
+                    }
+                    className={`flex-1 rounded-lg border px-3 py-1.5 text-sm outline-none transition-colors focus:ring-2 focus:ring-violet-400 dark:bg-zinc-800 dark:text-zinc-100 ${
+                      date === selectedDate
+                        ? "border-violet-400 bg-violet-50 dark:border-violet-600 dark:bg-violet-900/20"
+                        : "border-zinc-200 bg-white dark:border-zinc-700"
+                    }`}
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setWeekModalOpen(false)}
+                className="rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm text-zinc-600 transition-colors hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={savingWeek}
+                onClick={async () => {
+                  setSavingWeek(true);
+                  try {
+                    await Promise.all(
+                      Object.entries(weekGoals).map(([date, title]) =>
+                        apiRequest("/api/planner/daily-goals", {
+                          method: "PUT",
+                          body: JSON.stringify({ date, title }),
+                        }),
+                      ),
+                    );
+                    await loadDailyGoal(selectedDate);
+                    setWeekModalOpen(false);
+                  } finally {
+                    setSavingWeek(false);
+                  }
+                }}
+                className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-violet-700 disabled:opacity-50"
+              >
+                {savingWeek ? "Guardando…" : "Guardar semana"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
 
       {error ? (
         <div className="shrink-0 rounded-lg border border-rose-200 bg-rose-50/80 px-4 py-2.5 text-sm text-rose-700 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-300">
@@ -793,133 +1006,124 @@ export function PlannerPage() {
                 setError(requestError instanceof Error ? requestError.message : "Action failed");
               }
             }}
-            onToggleTask={async (task) => {
-              let targetId = task.id;
-              try {
-                targetId = await resolveTaskId(task.id);
-              } catch {
-                return;
-              }
+            onToggleTask={(task) => {
               const nextDone = !task.done;
               let snapshot: TaskItem | undefined;
               setTasks((prev) => {
-                snapshot = prev.find((t) => t.id === targetId);
-                return prev.map((t) => (t.id === targetId ? { ...t, done: nextDone } : t));
+                snapshot = prev.find((t) => t.id === task.id);
+                return prev.map((t) => (t.id === task.id ? { ...t, done: nextDone } : t));
               });
-              if (isTempId(targetId)) return;
-              setError(null);
-              try {
-                const data = await apiRequest<{ task: TaskItem }>(`/api/planner/tasks/${targetId}`, {
-                  method: "PATCH",
-                  body: JSON.stringify({ done: nextDone }),
-                });
-                setTasks((prev) => prev.map((t) => (t.id === targetId ? data.task : t)));
-              } catch (requestError) {
-                if (snapshot) {
-                  setTasks((prev) => prev.map((t) => (t.id === targetId ? snapshot! : t)));
+              void (async () => {
+                let targetId: string;
+                try {
+                  targetId = await resolveTaskId(task.id);
+                } catch {
+                  if (snapshot) setTasks((prev) => prev.map((t) => (t.id === task.id ? snapshot! : t)));
+                  return;
                 }
-                setError(requestError instanceof Error ? requestError.message : "Action failed");
-              }
+                if (isTempId(targetId)) return;
+                setError(null);
+                try {
+                  const data = await apiRequest<{ task: TaskItem }>(`/api/planner/tasks/${targetId}`, {
+                    method: "PATCH",
+                    body: JSON.stringify({ done: nextDone }),
+                  });
+                  setTasks((prev) => prev.map((t) => (t.id === targetId || t.id === task.id ? data.task : t)));
+                } catch (requestError) {
+                  if (snapshot) setTasks((prev) => prev.map((t) => (t.id === targetId || t.id === task.id ? snapshot! : t)));
+                  setError(requestError instanceof Error ? requestError.message : "Action failed");
+                }
+              })();
+              return Promise.resolve();
             }}
-            onCompleteTaskWithFocus={async (task, rizeEntryId, pointsCompleted) => {
-              let targetId = task.id;
-              try {
-                targetId = await resolveTaskId(task.id);
-              } catch {
-                return;
-              }
-              if (isTempId(targetId)) return;
-              // Optimismo: sumo puntos localmente; done=true solo si alcanzo el total.
+            onCompleteTaskWithFocus={(task, rizeEntryId, pointsCompleted) => {
               const total = Math.max(0, task.points ?? 0);
               const prevDone = Math.min(total, task.points_done ?? 0);
               const nextDone = Math.min(total, prevDone + Math.max(0, pointsCompleted));
               const shouldBeDone = total === 0 || nextDone >= total;
               let snapshot: TaskItem | undefined;
               setTasks((prev) => {
-                snapshot = prev.find((t) => t.id === targetId);
+                snapshot = prev.find((t) => t.id === task.id);
                 return prev.map((t) =>
-                  t.id === targetId
-                    ? { ...t, done: shouldBeDone, points_done: nextDone }
-                    : t,
+                  t.id === task.id ? { ...t, done: shouldBeDone, points_done: nextDone } : t,
                 );
               });
-              setError(null);
-              try {
-                const data = await apiRequest<{
-                  task: TaskItem;
-                  actualTaskBlock: ActualTaskBlock;
-                }>(`/api/planner/tasks/${targetId}/complete-with-focus`, {
-                  method: "POST",
-                  body: JSON.stringify({
-                    rizeEntryId,
-                    scheduledDate: selectedDate,
-                    pointsCompleted,
-                  }),
-                });
-                setTasks((prev) => prev.map((t) => (t.id === targetId ? data.task : t)));
-                setActualTaskBlocks((prev) => {
-                  const rest = prev.filter(
-                    (b) =>
-                      b.rize_entry_id === null ||
-                      b.rize_entry_id !== data.actualTaskBlock.rize_entry_id,
-                  );
-                  return [...rest, data.actualTaskBlock].sort(
-                    (a, b) => new Date(a.start_at).getTime() - new Date(b.start_at).getTime(),
-                  );
-                });
-              } catch (requestError) {
-                if (snapshot) {
-                  setTasks((prev) => prev.map((t) => (t.id === targetId ? snapshot! : t)));
+              void (async () => {
+                let targetId: string;
+                try {
+                  targetId = await resolveTaskId(task.id);
+                } catch {
+                  if (snapshot) setTasks((prev) => prev.map((t) => (t.id === task.id ? snapshot! : t)));
+                  return;
                 }
-                setError(requestError instanceof Error ? requestError.message : "Action failed");
-              }
+                if (isTempId(targetId)) return;
+                setError(null);
+                try {
+                  const data = await apiRequest<{
+                    task: TaskItem;
+                    actualTaskBlock: ActualTaskBlock;
+                  }>(`/api/planner/tasks/${targetId}/complete-with-focus`, {
+                    method: "POST",
+                    body: JSON.stringify({ rizeEntryId, scheduledDate: selectedDate, pointsCompleted }),
+                  });
+                  setTasks((prev) => prev.map((t) => (t.id === targetId || t.id === task.id ? data.task : t)));
+                  setActualTaskBlocks((prev) => {
+                    const rest = prev.filter(
+                      (b) => b.rize_entry_id === null || b.rize_entry_id !== data.actualTaskBlock.rize_entry_id,
+                    );
+                    return [...rest, data.actualTaskBlock].sort(
+                      (a, b) => new Date(a.start_at).getTime() - new Date(b.start_at).getTime(),
+                    );
+                  });
+                } catch (requestError) {
+                  if (snapshot) setTasks((prev) => prev.map((t) => (t.id === targetId || t.id === task.id ? snapshot! : t)));
+                  setError(requestError instanceof Error ? requestError.message : "Action failed");
+                }
+              })();
+              return Promise.resolve();
             }}
-            onCompleteTaskPartial={async (task, pointsCompleted) => {
-              let targetId = task.id;
-              try {
-                targetId = await resolveTaskId(task.id);
-              } catch {
-                return;
-              }
-              if (isTempId(targetId)) return;
+            onCompleteTaskPartial={(task, pointsCompleted) => {
               const total = Math.max(0, task.points ?? 0);
               const prevDone = Math.min(total, task.points_done ?? 0);
               const nextDone = Math.min(total, prevDone + Math.max(0, pointsCompleted));
               const shouldBeDone = total === 0 || nextDone >= total;
               let snapshot: TaskItem | undefined;
               setTasks((prev) => {
-                snapshot = prev.find((t) => t.id === targetId);
+                snapshot = prev.find((t) => t.id === task.id);
                 return prev.map((t) =>
-                  t.id === targetId
-                    ? { ...t, done: shouldBeDone, points_done: nextDone }
-                    : t,
+                  t.id === task.id ? { ...t, done: shouldBeDone, points_done: nextDone } : t,
                 );
               });
-              setError(null);
-              try {
-                const data = await apiRequest<{
-                  task: TaskItem;
-                  actualTaskBlock: ActualTaskBlock;
-                }>(`/api/planner/tasks/${targetId}/progress`, {
-                  method: "POST",
-                  body: JSON.stringify({
-                    pointsCompleted,
-                    scheduledDate: selectedDate,
-                  }),
-                });
-                setTasks((prev) => prev.map((t) => (t.id === targetId ? data.task : t)));
-                setActualTaskBlocks((prev) => {
-                  const next = [...prev, data.actualTaskBlock];
-                  return next.sort(
-                    (a, b) => new Date(a.start_at).getTime() - new Date(b.start_at).getTime(),
-                  );
-                });
-              } catch (requestError) {
-                if (snapshot) {
-                  setTasks((prev) => prev.map((t) => (t.id === targetId ? snapshot! : t)));
+              void (async () => {
+                let targetId: string;
+                try {
+                  targetId = await resolveTaskId(task.id);
+                } catch {
+                  if (snapshot) setTasks((prev) => prev.map((t) => (t.id === task.id ? snapshot! : t)));
+                  return;
                 }
-                setError(requestError instanceof Error ? requestError.message : "Action failed");
-              }
+                if (isTempId(targetId)) return;
+                setError(null);
+                try {
+                  const data = await apiRequest<{
+                    task: TaskItem;
+                    actualTaskBlock: ActualTaskBlock;
+                  }>(`/api/planner/tasks/${targetId}/progress`, {
+                    method: "POST",
+                    body: JSON.stringify({ pointsCompleted, scheduledDate: selectedDate }),
+                  });
+                  setTasks((prev) => prev.map((t) => (t.id === targetId || t.id === task.id ? data.task : t)));
+                  setActualTaskBlocks((prev) =>
+                    [...prev, data.actualTaskBlock].sort(
+                      (a, b) => new Date(a.start_at).getTime() - new Date(b.start_at).getTime(),
+                    ),
+                  );
+                } catch (requestError) {
+                  if (snapshot) setTasks((prev) => prev.map((t) => (t.id === targetId || t.id === task.id ? snapshot! : t)));
+                  setError(requestError instanceof Error ? requestError.message : "Action failed");
+                }
+              })();
+              return Promise.resolve();
             }}
             onDeleteTask={async (id) => {
               const ac = abortTaskCreateRef.current.get(id);
@@ -940,6 +1144,21 @@ export function PlannerPage() {
                 const r = removed;
                 if (r) setTasks((prev) => [...prev, r]);
                 setError(requestError instanceof Error ? requestError.message : "Action failed");
+              }
+            }}
+            onCarryTaskToNextDay={async (task: TaskItem) => {
+              if (isTempId(task.id)) return;
+              setError(null);
+              try {
+                await apiRequest<{ task: TaskItem; toDate: string }>(
+                  `/api/planner/tasks/${task.id}/carry-next-day`,
+                  { method: "POST" },
+                );
+                await loadDailyData();
+              } catch (requestError) {
+                setError(
+                  requestError instanceof Error ? requestError.message : "No se pudo pasar al día siguiente",
+                );
               }
             }}
             onReorderTasks={async (orderedIds) => {
@@ -967,17 +1186,17 @@ export function PlannerPage() {
                 setError(requestError instanceof Error ? requestError.message : "Reorder failed");
               }
             }}
-            onCreateTaskType={async ({ name, color }) => {
+            onCreateTaskType={async ({ name, color, contributesToMain }) => {
               const tempId = makeTempId();
               const ac = new AbortController();
               abortTaskTypeCreateRef.current.set(tempId, ac);
-              setTaskTypes((prev) => [...prev, { id: tempId, name, color }]);
+              setTaskTypes((prev) => [...prev, { id: tempId, name, color, contributes_to_main: contributesToMain ?? false }]);
               setError(null);
               const promise = (async () => {
                 try {
                   const data = await apiRequest<{ taskType: TaskType }>("/api/planner/task-types", {
                     method: "POST",
-                    body: JSON.stringify({ name, color }),
+                    body: JSON.stringify({ name, color, contributesToMain }),
                     signal: ac.signal,
                   });
                   setTaskTypes((prev) => prev.map((t) => (t.id === tempId ? data.taskType : t)));
@@ -998,7 +1217,8 @@ export function PlannerPage() {
             onPatchTaskType={async (id, input) => {
               const hasName = "name" in input && input.name !== undefined;
               const hasColor = "color" in input;
-              if (!hasName && !hasColor) return;
+              const hasContributes = "contributesToMain" in input;
+              if (!hasName && !hasColor && !hasContributes) return;
 
               let targetId = id;
               try {
@@ -1015,15 +1235,17 @@ export function PlannerPage() {
                     ...t,
                     ...(hasName ? { name: input.name! } : {}),
                     ...(hasColor ? { color: input.color ?? null } : {}),
+                    ...(hasContributes ? { contributes_to_main: input.contributesToMain! } : {}),
                   };
                 });
               });
               if (isTempId(targetId)) return;
               setError(null);
               try {
-                const body: { name?: string; color?: string | null } = {};
+                const body: { name?: string; color?: string | null; contributesToMain?: boolean } = {};
                 if (hasName) body.name = input.name!;
                 if (hasColor) body.color = input.color ?? null;
+                if (hasContributes) body.contributesToMain = input.contributesToMain;
                 const data = await apiRequest<{ taskType: TaskType }>(
                   `/api/planner/task-types/${targetId}`,
                   {

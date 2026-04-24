@@ -52,7 +52,7 @@ const PAST_HABIT_COMPACT_MAX_MIN = 45;
 /** Color fijo para bloques de foco Rize reales (no usa el color de categoría/tipo de la tarea). */
 const RIZE_ACTUAL_TASK_COLOR = "#14caf3f5";
 /** Altura minima por hora en el eje vertical (scroll si no cabe). */
-const TIMELINE_MIN_PX_PER_HOUR = 64;
+const TIMELINE_MIN_PX_PER_HOUR = 96;
 const TIMELINE_CONTENT_HEIGHT = 24 * TIMELINE_MIN_PX_PER_HOUR;
 
 function toIsoFromDateAndTime(date: string, timeHHMM: string) {

@@ -2,6 +2,7 @@ export type TaskType = {
   id: string;
   name: string;
   color: string | null;
+  contributes_to_main: boolean;
 };
 
 export type HabitType = {

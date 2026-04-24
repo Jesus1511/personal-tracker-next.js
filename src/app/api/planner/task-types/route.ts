@@ -20,14 +20,22 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const body = (await request.json()) as { name?: string; color?: string | null };
+    const body = (await request.json()) as {
+      name?: string;
+      color?: string | null;
+      contributesToMain?: boolean;
+    };
     const name = body.name?.trim();
     if (!name) throw new Error("Task type name is required.");
 
     const supabase = getSupabaseAdminClient();
     const { data, error } = await supabase
       .from("task_types")
-      .insert({ name, color: body.color ?? null })
+      .insert({
+        name,
+        color: body.color ?? null,
+        contributes_to_main: body.contributesToMain ?? false,
+      })
       .select("*")
       .single();
 

@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Google Cloud / Firebase service account keys (never commit)
+*firebase-adminsdk*.json

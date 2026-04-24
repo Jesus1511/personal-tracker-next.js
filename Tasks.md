@@ -1,25 +1,21 @@
--Poder colocar lo habitos que realmenete hice + una descripcion en el calendario
--Que compare las tareas con los tiempos de trabajo de rize
 
--Conectar gemini y que pueda analizar directamente la base de datos (tablas y lapsos de tiempo que yo escoja) + un prompt de que quiero o una plantilla de que me de nu resumen general y recomendaciones + almacenar sus respuesta por fechas y marcarlas como completadas | in completas -> exitosas | fallidas (porque)
-
-
-- Optimizar mobile para que sea rapido y sin friccion
 - Notificacion que me recuerde de planear el dia siguiente en calendario simple 
+- poder cambiar tareas al dia siguiente cuando quiera
 
--poder semi completar una tarea en diferentes bloques de rize
-
-- mandar a produccion en Vercel y descargar apk
+- automatizacion de mi ubicacion actual para denotar que no estoy en casa
+- solucionar error de tarea vacia
+- planificar la semana de manera simple
+- que haya una mision principal y secundarias o insiders
+- porcentaje de tareas main completadas
 
 *DATA*
 
 - calendarios visuales con verde amarillo o rojo en: horas trabajadas, foco en esas horas
 - porcentaje de tareas cumplidas por su peso
 - porcentaje de cumplimiento de rutina
+- mandar con ia 
 
 
-
-- al planificar dia siguiente que se tome el dia anterior de refe
 - que me envie resumen bonito al email de cada semana y de cada mes automaticamente, con las recomendaciones
 
 

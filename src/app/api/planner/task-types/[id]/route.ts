@@ -10,9 +10,13 @@ type RouteContext = {
 export async function PATCH(request: NextRequest, context: RouteContext) {
   try {
     const { id } = await context.params;
-    const body = (await request.json()) as { name?: string; color?: string | null };
+    const body = (await request.json()) as {
+      name?: string;
+      color?: string | null;
+      contributesToMain?: boolean;
+    };
 
-    const payload: { name?: string; color?: string | null } = {};
+    const payload: { name?: string; color?: string | null; contributes_to_main?: boolean } = {};
     if (typeof body.name === "string") {
       const normalized = body.name.trim();
       if (!normalized) throw new Error("Task type name cannot be empty.");
@@ -20,6 +24,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     }
     if ("color" in body) {
       payload.color = body.color ?? null;
+    }
+    if (typeof body.contributesToMain === "boolean") {
+      payload.contributes_to_main = body.contributesToMain;
     }
 
     if (Object.keys(payload).length === 0) {

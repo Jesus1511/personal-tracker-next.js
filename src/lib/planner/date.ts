@@ -25,3 +25,10 @@ export function assertIsoDateTime(value: string, fieldName: string): void {
     throw new Error(`Invalid ${fieldName}. Expected ISO date-time string.`);
   }
 }
+
+/** YYYY-MM-DD + delta días (zona fija al mediodía para evitar DST edge cases). */
+export function addCalendarDays(isoDate: string, delta: number): string {
+  const d = new Date(`${isoDate}T12:00:00`);
+  d.setDate(d.getDate() + delta);
+  return d.toISOString().slice(0, 10);
+}
