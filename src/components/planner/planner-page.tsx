@@ -71,6 +71,7 @@ export function PlannerPage() {
   const [loading, setLoading] = useState(true);
   const [cloningPrevDay, setCloningPrevDay] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [carryingToNextTaskId, setCarryingToNextTaskId] = useState<string | null>(null);
   const [dailyGoal, setDailyGoal] = useState<DailyGoal | null>(null);
   const [goalTitle, setGoalTitle] = useState("");
   const [weekModalOpen, setWeekModalOpen] = useState(false);
@@ -855,6 +856,7 @@ export function PlannerPage() {
             selectedDate={selectedDate}
             tasks={tasks}
             taskTypes={taskTypes}
+            carryingToNextTaskId={carryingToNextTaskId}
             onCreateTask={async ({ title, taskTypeId, afterTaskId }) => {
               const tempId = makeTempId();
               const ac = new AbortController();
@@ -1036,7 +1038,7 @@ export function PlannerPage() {
               })();
               return Promise.resolve();
             }}
-            onCompleteTaskWithFocus={(task, rizeEntryId, pointsCompleted) => {
+            onCompleteTaskWithFocus={(task, rizeEntryId, pointsCompleted, blockScheduledDate) => {
               const total = Math.max(0, task.points ?? 0);
               const prevDone = Math.min(total, task.points_done ?? 0);
               const nextDone = Math.min(total, prevDone + Math.max(0, pointsCompleted));
@@ -1064,7 +1066,12 @@ export function PlannerPage() {
                     actualTaskBlock: ActualTaskBlock;
                   }>(`/api/planner/tasks/${targetId}/complete-with-focus`, {
                     method: "POST",
-                    body: JSON.stringify({ rizeEntryId, scheduledDate: selectedDate, pointsCompleted }),
+                    body: JSON.stringify({
+                      rizeEntryId,
+                      scheduledDate: String(task.scheduled_date).slice(0, 10),
+                      pointsCompleted,
+                      ...(blockScheduledDate ? { blockScheduledDate } : {}),
+                    }),
                   });
                   setTasks((prev) => prev.map((t) => (t.id === targetId || t.id === task.id ? data.task : t)));
                   setActualTaskBlocks((prev) => {
@@ -1149,6 +1156,7 @@ export function PlannerPage() {
             onCarryTaskToNextDay={async (task: TaskItem) => {
               if (isTempId(task.id)) return;
               setError(null);
+              setCarryingToNextTaskId(task.id);
               try {
                 await apiRequest<{ task: TaskItem; toDate: string }>(
                   `/api/planner/tasks/${task.id}/carry-next-day`,
@@ -1159,6 +1167,8 @@ export function PlannerPage() {
                 setError(
                   requestError instanceof Error ? requestError.message : "No se pudo pasar al día siguiente",
                 );
+              } finally {
+                setCarryingToNextTaskId(null);
               }
             }}
             onReorderTasks={async (orderedIds) => {

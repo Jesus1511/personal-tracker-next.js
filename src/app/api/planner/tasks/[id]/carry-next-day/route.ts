@@ -27,15 +27,16 @@ export async function POST(_request: NextRequest, context: RouteContext) {
 
     const nextDate = addCalendarDays(String(task.scheduled_date).slice(0, 10), 1);
 
-    const { data: existingChild, error: childErr } = await supabase
+    const { data: existingChildren, error: childErr } = await supabase
       .from("tasks")
       .select("id")
       .eq("parent_task_id", taskId)
-      .eq("scheduled_date", nextDate)
-      .maybeSingle();
+      .limit(1);
     if (childErr) throw new Error(childErr.message);
-    if (existingChild) {
-      throw new Error("Ya existe una tarea hija en el día siguiente para esta tarea.");
+    if (existingChildren && existingChildren.length > 0) {
+      throw new Error(
+        "Ya pasaste esta tarea (existe una copia enlazada). Elimina esa copia para volver a pasarla.",
+      );
     }
 
     const total = Math.max(0, task.points ?? 0);

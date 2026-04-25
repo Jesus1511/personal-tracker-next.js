@@ -19,6 +19,21 @@ export async function GET(request: NextRequest) {
     const tasks = data ?? [];
     const taskIds = tasks.map((t) => t.id);
 
+    // Tareas hija creadas al “pasar al día siguiente” (cualquier fecha): un id por padre.
+    const carryChildIdByParent = new Map<string, string>();
+    if (taskIds.length > 0) {
+      const { data: childData, error: childErr } = await supabase
+        .from("tasks")
+        .select("id, parent_task_id")
+        .in("parent_task_id", taskIds);
+      if (childErr) throw new Error(childErr.message);
+      for (const row of childData ?? []) {
+        const p = row.parent_task_id;
+        if (!p || carryChildIdByParent.has(p)) continue;
+        carryChildIdByParent.set(p, row.id);
+      }
+    }
+
     // Sumo points_completed por task_id desde actual_task_blocks (solo del día);
     // me ahorro N round-trips trayendo una sola colección y agregando en memoria.
     const pointsDoneByTaskId = new Map<string, number>();
@@ -39,6 +54,7 @@ export async function GET(request: NextRequest) {
     const tasksWithProgress = tasks.map((t) => ({
       ...t,
       points_done: pointsDoneByTaskId.get(t.id) ?? 0,
+      carry_next_child_id: carryChildIdByParent.get(t.id) ?? null,
     }));
 
     return NextResponse.json({ tasks: tasksWithProgress, date });
@@ -75,7 +91,7 @@ export async function POST(request: NextRequest) {
       .insert({
         title,
         notes: body.notes ?? null,
-        task_type_id: body.taskTypeId ?? null,
+        task_type_id: null, // siempre sin categoría al crear
         scheduled_date: scheduledDate,
         sort_order: nextSort,
       })

@@ -3,6 +3,8 @@ import {
   type SendCustomNotificationInput,
 } from "@/lib/push/handle-send-custom-notification";
 
+import { habitPostWindowNudgeRule } from "./rules/habit-post-window-nudge";
+import { planTomorrowBudgetRule } from "./rules/plan-tomorrow-budget";
 import { rizeUnlinkedBlocksRule } from "./rules/rize-unlinked-blocks";
 
 /**
@@ -49,6 +51,8 @@ export type HourlyNotificationRule = {
 
 export const hourlyNotificationRules: HourlyNotificationRule[] = [
   rizeUnlinkedBlocksRule,
+  habitPostWindowNudgeRule,
+  planTomorrowBudgetRule,
 ];
 
 export type HourlyCronRuleRun = {

@@ -44,6 +44,24 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     if (Object.keys(payload).length === 0) throw new Error("No fields provided.");
 
     const supabase = getSupabaseAdminClient();
+
+    // Si se intenta marcar done=true, verificar que la tarea tenga categoría.
+    if (payload.done === true) {
+      const { data: current, error: fetchErr } = await supabase
+        .from("tasks")
+        .select("task_type_id")
+        .eq("id", id)
+        .single();
+      if (fetchErr) throw new Error(fetchErr.message);
+      const effectiveTypeId = "task_type_id" in payload ? payload.task_type_id : current.task_type_id;
+      if (!effectiveTypeId) {
+        return NextResponse.json(
+          { error: "Asigna una categoría antes de completar la tarea." },
+          { status: 422 },
+        );
+      }
+    }
+
     const { data, error } = await supabase
       .from("tasks")
       .update(payload)

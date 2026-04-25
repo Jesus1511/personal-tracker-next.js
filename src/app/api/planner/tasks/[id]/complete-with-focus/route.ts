@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { normalizeDate } from "@/lib/planner/date";
+import { addCalendarDays, normalizeDate } from "@/lib/planner/date";
 import { apiError } from "@/lib/planner/http";
 import { getSupabaseAdminClient } from "@/lib/supabase/server";
 
@@ -22,7 +22,10 @@ export async function POST(request: NextRequest, context: RouteContext) {
     const { id: taskId } = await context.params;
     const body = (await request.json()) as {
       rizeEntryId?: string;
+      /** Día de la tarea (debe coincidir con `tasks.scheduled_date`). */
       scheduledDate?: string;
+      /** Día en que está el `actual_task_block` de Rize (p. ej. día anterior para tarea hija/rollover). */
+      blockScheduledDate?: string;
       pointsCompleted?: number;
     };
 
@@ -33,23 +36,41 @@ export async function POST(request: NextRequest, context: RouteContext) {
     const supabase = getSupabaseAdminClient();
     const { data: task, error: taskError } = await supabase
       .from("tasks")
-      .select("id, scheduled_date, points")
+      .select("id, scheduled_date, points, parent_task_id")
       .eq("id", taskId)
       .single();
 
     if (taskError) throw new Error(taskError.message);
     if (!task) throw new Error("Task not found.");
 
-    const date = normalizeDate(body.scheduledDate ?? task.scheduled_date);
-    if (date !== task.scheduled_date) {
-      throw new Error("scheduledDate must match the task day.");
+    const taskDay = String(task.scheduled_date).slice(0, 10);
+    if (body.scheduledDate) {
+      const sd = normalizeDate(body.scheduledDate);
+      if (sd !== taskDay) {
+        throw new Error("scheduledDate debe ser el mismo día de la tarea.");
+      }
+    }
+
+    const prevDay = addCalendarDays(taskDay, -1);
+    let blockDate: string;
+    if (body.blockScheduledDate?.trim()) {
+      blockDate = normalizeDate(body.blockScheduledDate);
+      const allowed = new Set<string>([taskDay]);
+      if (task.parent_task_id) {
+        allowed.add(prevDay);
+      }
+      if (!allowed.has(blockDate)) {
+        throw new Error("blockScheduledDate no permitido para esta tarea.");
+      }
+    } else {
+      blockDate = taskDay;
     }
 
     const rizeId = body.rizeEntryId.trim();
     const { data: syncedBlock, error: syncedError } = await supabase
       .from("actual_task_blocks")
       .select("rize_entry_id, start_at, end_at, rize_title, points_completed")
-      .eq("scheduled_date", date)
+      .eq("scheduled_date", blockDate)
       .eq("rize_entry_id", rizeId)
       .maybeSingle();
 
@@ -63,7 +84,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     const { data: plannedRows, error: plannedError } = await supabase
       .from("time_blocks")
       .select("id")
-      .eq("scheduled_date", date)
+      .eq("scheduled_date", taskDay)
       .eq("entry_type", "task")
       .eq("task_id", taskId)
       .order("start_at", { ascending: true })
@@ -72,11 +93,10 @@ export async function POST(request: NextRequest, context: RouteContext) {
     if (plannedError) throw new Error(plannedError.message);
     const plannedBlockId = plannedRows?.[0]?.id ?? null;
 
-    // Calculo los puntos ya acumulados para esta tarea (excluyendo este mismo bloque si se re-linkea).
+    // Puntos en todos los días (vinculación en día distinto al de la tarea).
     const { data: existingBlocks, error: existingError } = await supabase
       .from("actual_task_blocks")
       .select("rize_entry_id, points_completed")
-      .eq("scheduled_date", date)
       .eq("task_id", taskId);
     if (existingError) throw new Error(existingError.message);
 
@@ -92,7 +112,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
     const rizeTitle = syncedBlock.rize_title?.trim() || "Sin título";
     const updatePayload = {
-      scheduled_date: date,
+      scheduled_date: blockDate,
       start_at: syncedBlock.start_at,
       end_at: syncedBlock.end_at,
       task_id: taskId,

@@ -6,7 +6,7 @@
  * Si dejas `* * * * *` con `CRON_EVERY_MINUTE` false, solo corre la lógica
  * en el minuto 0 de cada hora (resto: skip rápido).
  */
-export const CRON_EVERY_MINUTE = true;
+export const CRON_EVERY_MINUTE = false;
 
 /** `next dev`: correr notificaciones al levantar el server y luego en loop cada `DEV_CRON_INTERVAL_MS`. */
 export const CRON_RUN_ON_DEV_START = true;

@@ -25,6 +25,8 @@ export type TaskItem = {
   task_type?: TaskType | null;
   /** Si esta tarea nació por rollover, apunta a la tarea original. */
   parent_task_id?: string | null;
+  /** Id de la tarea hija creada al “pasar al día siguiente” (mientras exista, no re-enviar). */
+  carry_next_child_id?: string | null;
 };
 
 export type TimeBlock = {
