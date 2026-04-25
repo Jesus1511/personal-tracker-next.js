@@ -516,7 +516,7 @@ export async function POST(request: NextRequest) {
       const p = result.place;
       try {
         await handleSendCustomNotification({
-          title: "Lugar nuevo",
+          title: "🔴 Lugar nuevo",
           body: "Se detectó y guardó un sitio distinto. Revisa o nómbralo (casa) en Lugares.",
           data: {
             type: "location_place_created",

@@ -1,21 +1,31 @@
-import { Resend } from "resend";
+import nodemailer from "nodemailer";
 
 export async function sendWeeklySummaryEmail(html: string, weekLabel: string): Promise<void> {
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) throw new Error("RESEND_API_KEY not set");
-
   const from = process.env.WEEKLY_EMAIL_FROM;
   const to = process.env.WEEKLY_EMAIL_TO;
+  const user = process.env.EMAIL_USER;
+  const pass = process.env.EMAIL_PASS;
   if (!from || !to) throw new Error("WEEKLY_EMAIL_FROM / WEEKLY_EMAIL_TO not set");
+  if (!user || !pass) throw new Error("EMAIL_USER and EMAIL_PASS not set (SMTP / Hostinger)");
 
-  const resend = new Resend(apiKey);
+  const port = Number(process.env.SMTP_PORT) || 465;
+  const secure = port === 465;
+  const transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST || "smtp.hostinger.com",
+    port,
+    secure,
+    requireTLS: !secure,
+    auth: { user, pass },
+  });
 
-  const { error } = await resend.emails.send({
+  const info = await transporter.sendMail({
     from,
-    to: [to],
+    to,
     subject: `Resumen semanal ${weekLabel}`,
     html,
   });
 
-  if (error) throw new Error(`Resend error: ${JSON.stringify(error)}`);
+  if (info.rejected.length) {
+    throw new Error(`SMTP rejected: ${info.rejected.join(", ")}`);
+  }
 }

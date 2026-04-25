@@ -130,7 +130,7 @@ export const rizeUnlinkedBlocksRule: HourlyNotificationRule = {
 
       try {
         await handleSendCustomNotification({
-          title: "¿Qué hiciste en este bloque?",
+          title: "🔵 ¿Qué hiciste en este bloque?",
           body: `"${title}" (${start}–${end}) · terminó ${ago}. Asígnale una tarea.`,
           data: {
             type: "rize_unlinked_block",

@@ -51,8 +51,8 @@ Formatea la respuesta en HTML limpio listo para incrustar en un email (solo el b
 }
 
 export async function generateWeeklySummaryHtml(data: WeeklySummaryData): Promise<string> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set");
+  const apiKey = process.env.CLAUDE_API_KEY ?? process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error("CLAUDE_API_KEY or ANTHROPIC_API_KEY not set");
 
   const client = new Anthropic({ apiKey });
 

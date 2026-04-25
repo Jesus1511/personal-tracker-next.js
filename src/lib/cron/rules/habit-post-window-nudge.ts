@@ -80,7 +80,7 @@ export const habitPostWindowNudgeRule: HourlyNotificationRule = {
 
       try {
         await handleSendCustomNotification({
-          title: "¿Completaste el hábito?",
+          title: "🟢 ¿Completaste el hábito?",
           body: `“${title}”. ${body}`,
           data: {
             type: "habit_post_window_nudge",
