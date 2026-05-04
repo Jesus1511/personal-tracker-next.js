@@ -11,6 +11,19 @@ type RouteContext = {
   params: Promise<{ id: string }>;
 };
 
+/** DELETE — eliminar un lugar y sus hábitos vinculados (cascade en DB). */
+export async function DELETE(_request: NextRequest, context: RouteContext) {
+  try {
+    const { id } = await context.params;
+    const supabase = getSupabaseAdminClient();
+    const { error } = await supabase.from("location_places").delete().eq("id", id);
+    if (error) throw new Error(error.message);
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    return apiError(error);
+  }
+}
+
 /**
  * PATCH — actualizar campos de un lugar (varias filas pueden tener is_home).
  */
@@ -21,6 +34,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       lat?: number;
       lng?: number;
       isHome?: boolean;
+      name?: string | null;
       firstSeenAt?: string | null;
       lastSeenAt?: string | null;
     };
@@ -31,6 +45,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     if (typeof body.lat === "number" && Number.isFinite(body.lat)) payload.lat = body.lat;
     if (typeof body.lng === "number" && Number.isFinite(body.lng)) payload.lng = body.lng;
     if (typeof body.isHome === "boolean") payload.is_home = body.isHome;
+    if ("name" in body) {
+      payload.name = body.name === null || body.name === "" ? null : body.name;
+    }
     if (typeof body.firstSeenAt === "string" && body.firstSeenAt.trim() !== "") {
       payload.first_seen_at = body.firstSeenAt.trim();
     }

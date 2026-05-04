@@ -34,7 +34,7 @@ const DAY_LABELS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
 import { DailyCalendar } from "./daily-calendar";
 import { DailyTodoList } from "./daily-todo-list";
 import { PlannedTimeSummary } from "./planned-time-summary";
-import { ActualHabitBlock, ActualTaskBlock, HabitType, TaskItem, TaskType, TimeBlock } from "./types";
+import { ActualHabitBlock, ActualTaskBlock, DailyRoutineSummary, HabitType, RoutineApplicationDto, TaskItem, TaskType, TimeBlock } from "./types";
 
 function todayDate() {
   return localDateString();
@@ -77,6 +77,13 @@ export function PlannerPage() {
   const [weekModalOpen, setWeekModalOpen] = useState(false);
   const [weekGoals, setWeekGoals] = useState<Record<string, string>>({});
   const [savingWeek, setSavingWeek] = useState(false);
+  const [routineApplication, setRoutineApplication] = useState<RoutineApplicationDto | null>(null);
+  const [routinesModalOpen, setRoutinesModalOpen] = useState(false);
+  const [routinesList, setRoutinesList] = useState<DailyRoutineSummary[]>([]);
+  const [routinesLoading, setRoutinesLoading] = useState(false);
+  const [routineSaveBusy, setRoutineSaveBusy] = useState(false);
+  const [applyingRoutineId, setApplyingRoutineId] = useState<string | null>(null);
+  const [routineUpdateBusy, setRoutineUpdateBusy] = useState(false);
   const goalSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const syncAbortRef = useRef<AbortController | null>(null);
   const taskTypesRef = useRef(taskTypes);
@@ -123,16 +130,20 @@ export function PlannerPage() {
   }
 
   async function loadDailyData() {
-    const [taskData, blockData, actualData, actualTaskData] = await Promise.all([
+    const [taskData, blockData, actualData, actualTaskData, appData] = await Promise.all([
       apiRequest<{ tasks: TaskItem[] }>(`/api/planner/tasks?date=${selectedDate}`),
       apiRequest<{ timeBlocks: TimeBlock[] }>(`/api/planner/time-blocks?date=${selectedDate}`),
       apiRequest<{ actualHabitBlocks: ActualHabitBlock[] }>(`/api/planner/actual-habits?date=${selectedDate}`),
       apiRequest<{ actualTaskBlocks: ActualTaskBlock[] }>(`/api/planner/actual-tasks?date=${selectedDate}`),
+      apiRequest<{ application: RoutineApplicationDto | null }>(
+        `/api/planner/routines/application?date=${selectedDate}`,
+      ),
     ]);
     setTasks(taskData.tasks);
     setTimeBlocks(blockData.timeBlocks);
     setActualHabitBlocks(actualData.actualHabitBlocks);
     setActualTaskBlocks(actualTaskData.actualTaskBlocks);
+    setRoutineApplication(appData.application);
     await loadDailyGoal(selectedDate);
   }
 
@@ -263,6 +274,124 @@ export function PlannerPage() {
     }
   }
 
+  async function openRoutinesModal() {
+    setRoutinesModalOpen(true);
+    setRoutinesLoading(true);
+    setError(null);
+    try {
+      const data = await apiRequest<{ routines: DailyRoutineSummary[] }>("/api/planner/routines");
+      setRoutinesList(data.routines);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "No se pudieron cargar rutinas");
+    } finally {
+      setRoutinesLoading(false);
+    }
+  }
+
+  async function saveCurrentDayAsNewRoutine() {
+    const defaultName = `Rutina ${selectedDate}`;
+    const name = window.prompt("Nombre de la rutina", defaultName);
+    if (name === null) return;
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setRoutineSaveBusy(true);
+    setError(null);
+    try {
+      await apiRequest("/api/planner/routines", {
+        method: "POST",
+        body: JSON.stringify({ name: trimmed, sourceDate: selectedDate }),
+      });
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "No se pudo guardar la rutina");
+    } finally {
+      setRoutineSaveBusy(false);
+    }
+  }
+
+  async function applyRoutineToSelectedDay(routineId: string) {
+    const hasPlanned = tasks.length > 0 || timeBlocks.length > 0;
+    const hasActual = actualTaskBlocks.length > 0 || actualHabitBlocks.length > 0;
+    if (hasPlanned || hasActual) {
+      const ok = window.confirm(
+        "Esto borra la planificación del día (tareas y bloques del calendario). Los registros de lo hecho no se borran, pero pueden quedar desvinculados. ¿Seguir?",
+      );
+      if (!ok) return;
+    }
+    setApplyingRoutineId(routineId);
+    setError(null);
+    try {
+      await apiRequest(`/api/planner/routines/${routineId}/apply`, {
+        method: "POST",
+        body: JSON.stringify({ date: selectedDate }),
+      });
+      await loadDailyData();
+      setRoutinesModalOpen(false);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "No se pudo aplicar la rutina");
+    } finally {
+      setApplyingRoutineId(null);
+    }
+  }
+
+  async function updateLinkedRoutineFromCurrentDay() {
+    const rid = routineApplication?.routineId;
+    if (!rid) return;
+    const ok = window.confirm(
+      "Sobrescribir la plantilla guardada de esta rutina con la planificación de este día (tareas + bloques)?",
+    );
+    if (!ok) return;
+    setRoutineUpdateBusy(true);
+    setError(null);
+    try {
+      await apiRequest(`/api/planner/routines/${rid}/from-day`, {
+        method: "PUT",
+        body: JSON.stringify({ date: selectedDate }),
+      });
+      await loadDailyData();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "No se pudo actualizar la rutina");
+    } finally {
+      setRoutineUpdateBusy(false);
+    }
+  }
+
+  async function renameRoutineRow(r: DailyRoutineSummary) {
+    const name = window.prompt("Nuevo nombre", r.name);
+    if (name === null) return;
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setError(null);
+    try {
+      await apiRequest(`/api/planner/routines/${r.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ name: trimmed }),
+      });
+      setRoutinesList((prev) =>
+        prev.map((x) => (x.id === r.id ? { ...x, name: trimmed } : x)),
+      );
+      setRoutineApplication((prev) =>
+        prev && prev.routineId === r.id && prev.routine
+          ? { ...prev, routine: { id: r.id, name: trimmed } }
+          : prev,
+      );
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "No se pudo renombrar");
+    }
+  }
+
+  async function deleteRoutineRow(r: DailyRoutineSummary) {
+    const ok = window.confirm(`¿Borrar la rutina «${r.name}»? No borra días ya planificados.`);
+    if (!ok) return;
+    setError(null);
+    try {
+      await apiRequest(`/api/planner/routines/${r.id}`, { method: "DELETE" });
+      setRoutinesList((prev) => prev.filter((x) => x.id !== r.id));
+      await loadDailyData();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "No se pudo borrar");
+    }
+  }
+
   return (
     <main className="flex w-full flex-col gap-5 px-40 py-5 sm:px-6">
       <header className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between px-20 pt-4 pb-1">
@@ -272,7 +401,7 @@ export function PlannerPage() {
             Tareas, hábitos y bloques de tiempo.
           </p>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex flex-wrap items-center justify-end gap-1 sm:justify-start">
           <button
             type="button"
             onClick={() => {
@@ -320,6 +449,41 @@ export function PlannerPage() {
           >
             <span>📅</span> Semana
           </button>
+          {routineApplication?.routineId ? (
+            <span
+              className="max-w-[10rem] truncate px-1 text-xs font-medium text-violet-700 dark:text-violet-300"
+              title={routineApplication.routine?.name ?? ""}
+            >
+              Usando: {routineApplication.routine?.name ?? "…"}
+            </span>
+          ) : null}
+          {routineApplication?.routineId ? (
+            <button
+              type="button"
+              disabled={routineUpdateBusy || loading}
+              onClick={() => void updateLinkedRoutineFromCurrentDay()}
+              className="flex h-9 items-center rounded-lg border border-violet-200 bg-violet-50 px-2.5 text-xs font-medium text-violet-800 shadow-sm transition-colors hover:bg-violet-100 disabled:opacity-50 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-200 dark:hover:bg-violet-900/50"
+            >
+              {routineUpdateBusy ? "…" : "Actualizar rutina"}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => void openRoutinesModal()}
+            className="flex h-9 items-center rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-600 shadow-sm transition-colors hover:border-zinc-300 hover:text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:border-zinc-600 dark:hover:text-zinc-100"
+          >
+            Rutinas
+          </button>
+          {!routineApplication?.routineId && (tasks.length > 0 || timeBlocks.length > 0) ? (
+            <button
+              type="button"
+              disabled={routineSaveBusy || loading}
+              onClick={() => void saveCurrentDayAsNewRoutine()}
+              className="flex h-9 items-center rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 text-xs font-medium text-emerald-800 shadow-sm transition-colors hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200 dark:hover:bg-emerald-900/50"
+            >
+              {routineSaveBusy ? "…" : "Guardar como rutina"}
+            </button>
+          ) : null}
         </div>
       </header>
 
@@ -460,6 +624,79 @@ export function PlannerPage() {
                 className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-violet-700 disabled:opacity-50"
               >
                 {savingWeek ? "Guardando…" : "Guardar semana"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Routines modal */}
+      {routinesModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+          onClick={() => setRoutinesModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-lg rounded-2xl border border-zinc-200 bg-white p-6 shadow-2xl dark:border-zinc-700 dark:bg-zinc-900"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="mb-4 text-lg font-semibold text-zinc-900 dark:text-zinc-50">
+              Rutinas guardadas
+            </h2>
+            <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
+              «Aplicar» reemplaza las tareas y bloques planeados del día {selectedDate}.
+            </p>
+            {routinesLoading ? (
+              <p className="text-sm text-zinc-400 dark:text-zinc-500">Cargando…</p>
+            ) : routinesList.length === 0 ? (
+              <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                No hay rutinas. Planifica un día y pulsa «Guardar como rutina».
+              </p>
+            ) : (
+              <ul className="flex max-h-72 flex-col gap-2 overflow-y-auto pr-1">
+                {routinesList.map((r) => (
+                  <li
+                    key={r.id}
+                    className="flex flex-wrap items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50/80 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-800/50"
+                  >
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-800 dark:text-zinc-100">
+                      {r.name}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={applyingRoutineId !== null || loading}
+                      onClick={() => void applyRoutineToSelectedDay(r.id)}
+                      className="shrink-0 rounded-md bg-violet-600 px-2 py-1 text-xs font-medium text-white transition-colors hover:bg-violet-700 disabled:opacity-50"
+                    >
+                      {applyingRoutineId === r.id ? "…" : "Aplicar"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={loading}
+                      onClick={() => void renameRoutineRow(r)}
+                      className="shrink-0 rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs text-zinc-600 transition-colors hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700/50"
+                    >
+                      Renombrar
+                    </button>
+                    <button
+                      type="button"
+                      disabled={loading}
+                      onClick={() => void deleteRoutineRow(r)}
+                      className="shrink-0 rounded-md border border-rose-200 bg-white px-2 py-1 text-xs text-rose-700 transition-colors hover:bg-rose-50 dark:border-rose-800 dark:bg-zinc-900 dark:text-rose-300 dark:hover:bg-rose-950/30"
+                    >
+                      Borrar
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="mt-5 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setRoutinesModalOpen(false)}
+                className="rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm text-zinc-600 transition-colors hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400"
+              >
+                Cerrar
               </button>
             </div>
           </div>

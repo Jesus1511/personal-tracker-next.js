@@ -8,11 +8,11 @@
  */
 export const CRON_EVERY_MINUTE = false;
 
-/** `next dev`: correr notificaciones al levantar el server y luego en loop cada `DEV_CRON_INTERVAL_MS`. */
+/** Al levantar Node (dev o prod) y luego cada `DEV_CRON_INTERVAL_MS`. En Vercel no aplica (ver instrumentation). */
 export const CRON_RUN_ON_DEV_START = true;
 
 /** Intervalo del loop en dev (ms). 60_000 = cada minuto. */
-export const DEV_CRON_INTERVAL_MS = 60_000;
+export const DEV_CRON_INTERVAL_MS = 3_600_000;
 
 /**
  * Tiempo mínimo desde el **fin** del bloque Rize hasta notificar

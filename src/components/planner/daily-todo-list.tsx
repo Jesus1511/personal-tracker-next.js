@@ -220,9 +220,7 @@ export function DailyTodoList({
     }
   }
 
-  async function handleNewTaskKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key !== "Enter") return;
-    e.preventDefault();
+  async function addTaskFromComposer() {
     const title = newTaskTitle.trim();
     if (!title) return;
     const lastTask = activeTasks[activeTasks.length - 1];
@@ -642,12 +640,21 @@ export function DailyTodoList({
               <input
                 type="text"
                 value={newTaskTitle}
-                onChange={(e) => setNewTaskTitle(e.target.value)}
-                onKeyDown={(e) => void handleNewTaskKeyDown(e)}
+                onChange={(e) =>
+                  setNewTaskTitle(e.target.value.replace(/\r\n|\r|\n/g, " "))
+                }
                 className="min-w-0 flex-1 border-0 bg-transparent py-0.5 text-sm text-zinc-800 outline-none placeholder:text-zinc-300 dark:text-zinc-200 dark:placeholder:text-zinc-600"
-                placeholder="Nueva tarea... (Enter para crear)"
+                placeholder="Nueva tarea…"
                 aria-label="Nueva tarea"
               />
+              <button
+                type="button"
+                onClick={() => void addTaskFromComposer()}
+                className="shrink-0 rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition-colors hover:bg-violet-700 disabled:opacity-50"
+                disabled={!newTaskTitle.trim()}
+              >
+                Añadir
+              </button>
             </div>
           ) : null}
 

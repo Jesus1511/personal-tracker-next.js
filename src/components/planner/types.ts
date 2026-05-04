@@ -78,3 +78,16 @@ export type RizeTimeEntryOption = {
   endTime: string;
   durationSeconds: number;
 };
+
+export type DailyRoutineSummary = {
+  id: string;
+  name: string;
+  description: string | null;
+  updated_at: string;
+};
+
+export type RoutineApplicationDto = {
+  date: string;
+  routineId: string | null;
+  routine: { id: string; name: string } | null;
+};

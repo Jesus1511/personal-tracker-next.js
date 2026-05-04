@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { ASSUMED_SINGLE_PULSE_VISIT_MS } from "@/lib/location/assumed-visit-duration";
+import { distanceMetersBetween } from "@/lib/location/distance-meters";
 import { apiError } from "@/lib/planner/http";
 import { getSupabaseAdminClient } from "@/lib/supabase/server";
 import { handleSendCustomNotification } from "@/lib/push/handle-send-custom-notification";
 
 export const dynamic = "force-dynamic";
+
+/** Mismo radio que `location_nearest_place` / par de pulsos consecutivos. */
+const PLACE_MATCH_RADIUS_M = 60;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -130,7 +134,7 @@ async function attachPulseToPlace(
   return { pulse, place: updatedPlace };
 }
 
-/** Tras pulso con place previo y sin `nearest` a 60 m: fusionar a is_home o crear lugar. */
+/** Tras dos pulsos consecutivos en la misma zona (≤60 m) sin `nearest`: fusionar a is_home o crear lugar. */
 async function matchHomeOrCreatePlace(
   supabase: ReturnType<typeof getSupabaseAdminClient>,
   body: LocationPulseBody,
@@ -195,12 +199,12 @@ async function matchHomeOrCreatePlace(
 
 /**
  * Rules:
- * 1. If there is a known place within 60 m  → associate pulse, update last_seen_at.
- * 2. If no place within 60 m, look at the latest pulse in DB (before this insert):
- *    a. No previous pulse  → insert pulse con place_id = null (primer ping; sin historia).
- *    b. It had a place_id  → nuevo tramo: casa cercana o nuevo lugar.
- *    c. It had no place_id  → ya había un “defer”; este es el 2.º punto →
- *       mismo criterio que (b) (ancla o crea; sale del limbo de defer encadenado).
+ * 1. Si hay location_places a ≤60 m → unir pulso (casa: solo last_seen; otro: pulse+last_seen).
+ * 2. Si no hay lugar cercano, último pulso en BD:
+ *    a. Ninguno → DEFER (place_id null).
+ *    b. Con place_id → DEFER (primer punto fuera de todo lugar; aún no crear sitio nuevo).
+ *    c. Sin place_id y distancia al pulso previo ≤60 m → casa o crear lugar (segundo tick en la zona).
+ *    d. Sin place_id y distancia >60 m → DEFER (reinicia el par).
  */
 async function upsertPulse(body: LocationPulseBody): Promise<{
   pulse: LocationPulse | null;
@@ -287,14 +291,23 @@ async function upsertPulse(body: LocationPulseBody): Promise<{
   // ── 3. No nearby place: check previous pulse (última fila antes de este insert)
   const { data: prevRows, error: prevErr } = await supabase
     .from("location_pulses")
-    .select("place_id, recorded_at, created_at")
+    .select("id, place_id, lat, lng, recorded_at, created_at")
     .order("created_at", { ascending: false })
     .limit(1);
   if (prevErr) throw new Error(`prev pulse: ${prevErr.message}`);
 
+  type PrevPulseRow = {
+    id: string;
+    place_id: string | null;
+    lat: number;
+    lng: number;
+    recorded_at: string;
+    created_at: string;
+  };
+
   const prev =
     Array.isArray(prevRows) && prevRows.length > 0
-      ? (prevRows[0] as { place_id: string | null; recorded_at: string; created_at: string })
+      ? (prevRows[0] as PrevPulseRow)
       : null;
 
   if (!prev) {
@@ -324,12 +337,95 @@ async function upsertPulse(body: LocationPulseBody): Promise<{
     };
   }
 
+  // ── 3b. Venías de un lugar conocido y ahora no hay ninguno a ≤60 m → primer tick fuera; defer
+  if (prev.place_id !== null) {
+    logPulse(
+      "Paso 2 — Último pulso tenía sitio; ahora no hay location_places a ≤60 m. Diferir hasta un 2.º tick en la misma zona (≤60 m entre coords consecutivas).",
+      { prevPlaceId: prev.place_id },
+    );
+    const { data: pulse, error: pulseErr } = await supabase
+      .from("location_pulses")
+      .insert({
+        lat,
+        lng,
+        accuracy: accuracy ?? null,
+        recorded_at: recordedAt,
+        source: source ?? null,
+        platform: platform ?? null,
+        place_id: null,
+      })
+      .select()
+      .single<LocationPulse>();
+    if (pulseErr) throw new Error(`insert deferred pulse: ${pulseErr.message}`);
+
+    return {
+      pulse,
+      place: null,
+      action: "deferred",
+      prevPlaceId: prev.place_id,
+      prevRecordedAt: prev.recorded_at,
+      prevCreatedAt: prev.created_at,
+    };
+  }
+
+  // ── 3c. Ya en limbo: segundo tick debe estar a ≤60 m del pulso diferido
+  const prevCoordsOk =
+    typeof prev.lat === "number" &&
+    typeof prev.lng === "number" &&
+    !Number.isNaN(prev.lat) &&
+    !Number.isNaN(prev.lng);
+  const pairDist = prevCoordsOk
+    ? distanceMetersBetween({ lat: prev.lat, lng: prev.lng }, { lat, lng })
+    : Number.POSITIVE_INFINITY;
+
+  if (!prevCoordsOk || pairDist > PLACE_MATCH_RADIUS_M) {
+    logPulse(
+      !prevCoordsOk
+        ? "Paso 2 — Pulso previo sin lat/lng válidos: nuevo DEFER."
+        : `Paso 2 — 2.º punto a ${Math.round(pairDist)} m del diferido (> ${PLACE_MATCH_RADIUS_M} m). Reinicia el par: DEFER.`,
+      prevCoordsOk ? { pairDistM: pairDist } : {},
+    );
+    const { data: pulse, error: pulseErr } = await supabase
+      .from("location_pulses")
+      .insert({
+        lat,
+        lng,
+        accuracy: accuracy ?? null,
+        recorded_at: recordedAt,
+        source: source ?? null,
+        platform: platform ?? null,
+        place_id: null,
+      })
+      .select()
+      .single<LocationPulse>();
+    if (pulseErr) throw new Error(`insert deferred pulse: ${pulseErr.message}`);
+
+    return {
+      pulse,
+      place: null,
+      action: "deferred",
+      prevPlaceId: null,
+      prevRecordedAt: null,
+      prevCreatedAt: null,
+    };
+  }
+
   logPulse(
-    "Paso 2 — Ya existía al menos un pulso previo. Siguiente: si no hay is_home a ≤60 m, crear sitio NUEVO; si la hay, anclar a casa.",
-    { lastPrevHadPlaceId: prev.place_id !== null },
+    "Paso 2 — Dos ticks seguidos en la misma zona (≤60 m), sin lugar existente: crear o anclar a casa.",
+    { pairDistM: Math.round(pairDist) },
   );
-  // ── 3b. Al menos un pulso previo (con o sin place) → ancla o tramo (evita defer ∞)
   const r3b = await matchHomeOrCreatePlace(supabase, body);
+
+  if (r3b.place?.id) {
+    const { error: linkErr } = await supabase
+      .from("location_pulses")
+      .update({ place_id: r3b.place.id })
+      .eq("id", prev.id);
+    if (linkErr) {
+      console.error("[location/pulse] link prior deferred pulse to place", linkErr.message);
+    }
+  }
+
   return {
     ...r3b,
     prevPlaceId: prev.place_id,

@@ -7,6 +7,7 @@ const LINKS = [
   { href: "/", label: "Planner" },
   { href: "/analysis", label: "AI Analysis" },
   { href: "/metricas", label: "Métricas" },
+  { href: "/lugares", label: "Lugares" },
 ] as const;
 
 export function NavBar() {

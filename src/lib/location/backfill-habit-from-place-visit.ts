@@ -2,7 +2,7 @@ import { ASSUMED_SINGLE_PULSE_VISIT_MS } from "@/lib/location/assumed-visit-dura
 import { getSupabaseAdminClient } from "@/lib/supabase/server";
 
 const VET = "America/Caracas";
-const STILL_THERE_MS = 20 * 60 * 1000;
+const STILL_THERE_MS = 10 * 60 * 1000;
 
 function vetToday(): string {
   return new Intl.DateTimeFormat("en-CA", {

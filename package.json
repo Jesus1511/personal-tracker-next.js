@@ -8,10 +8,12 @@
     "start": "next start",
     "lint": "eslint",
     "fix:calendar-task-links": "node scripts/fix-calendar-task-links.mjs",
-    "test:push": "node scripts/test-custom-push.mjs"
+    "test:push": "node scripts/test-custom-push.mjs",
+    "deploy:prod": "bash scripts/deploy-prod.sh"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",
+    "@react-google-maps/api": "^2.20.8",
     "@supabase/supabase-js": "^2.103.0",
     "@tailwindcss/typography": "^0.5.19",
     "expo-server-sdk": "^6.1.0",
@@ -25,8 +27,8 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
-    "@types/nodemailer": "^6.4.14",
     "@types/node": "^20",
+    "@types/nodemailer": "^6.4.14",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",

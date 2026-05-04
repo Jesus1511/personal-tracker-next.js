@@ -7,6 +7,7 @@ export const dynamic = "force-dynamic";
 
 export type LocationPlaceRow = {
   id: string;
+  name: string | null;
   lat: number;
   lng: number;
   is_home: boolean;
