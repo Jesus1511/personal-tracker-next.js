@@ -10,9 +10,17 @@ type RouteContext = {
 export async function PATCH(request: NextRequest, context: RouteContext) {
   try {
     const { id } = await context.params;
-    const body = (await request.json()) as { name?: string; color?: string | null };
+    const body = (await request.json()) as {
+      name?: string;
+      color?: string | null;
+      track_in_streaks?: boolean;
+    };
 
-    const payload: { name?: string; color?: string | null } = {};
+    const payload: {
+      name?: string;
+      color?: string | null;
+      track_in_streaks?: boolean;
+    } = {};
     if (typeof body.name === "string") {
       const normalized = body.name.trim();
       if (!normalized) throw new Error("Habit type name cannot be empty.");
@@ -20,6 +28,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     }
     if ("color" in body) {
       payload.color = body.color ?? null;
+    }
+    if (typeof body.track_in_streaks === "boolean") {
+      payload.track_in_streaks = body.track_in_streaks;
     }
     if (Object.keys(payload).length === 0) throw new Error("No fields provided.");
 

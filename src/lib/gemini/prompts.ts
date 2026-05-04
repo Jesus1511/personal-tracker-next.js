@@ -143,6 +143,11 @@ function enrichAndStrip(table: string, row: Row, lu: Lookups): Row | null {
       if (ttid) out.task_type = lu.taskTypes.get(ttid) ?? ttid;
       return out;
     }
+    case "daily_summaries": {
+      const out: Row = {};
+      if (typeof r.text === "string") out.text = r.text;
+      return out;
+    }
     case "daily_routine_applications":
       return null;
     case "daily_routine_tasks": {

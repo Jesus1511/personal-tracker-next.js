@@ -9,6 +9,8 @@ export type HabitType = {
   id: string;
   name: string;
   color: string | null;
+  /** false = oculto en rachas (métricas). Por defecto true. */
+  track_in_streaks?: boolean;
 };
 
 export type TaskItem = {

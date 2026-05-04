@@ -24,6 +24,7 @@ export type AnalyzableTable =
   | "actual_task_blocks"
   | "actual_habit_blocks"
   | "daily_goals"
+  | "daily_summaries"
   | "routines";
 
 export const ANALYZABLE_TABLES: {
@@ -35,6 +36,7 @@ export const ANALYZABLE_TABLES: {
   { key: "actual_task_blocks", label: "Bloques reales (tareas)" },
   { key: "actual_habit_blocks", label: "Bloques reales (hábitos)" },
   { key: "daily_goals", label: "Meta del día (daily_goals)" },
+  { key: "daily_summaries", label: "Resumen del día" },
   { key: "routines", label: "Rutinas" },
 ];
 

@@ -21,7 +21,50 @@ function hoursBetween(startIso: string, endIso: string): number {
   return Math.max(0, ms / 3_600_000);
 }
 
-type HabitType = { id: string; name: string; color: string | null };
+/** Milliseconds overlap of two [start,end) intervals. */
+function overlapMs(a0: number, a1: number, b0: number, b1: number): number {
+  const s = Math.max(a0, b0);
+  const e = Math.min(a1, b1);
+  return Math.max(0, e - s);
+}
+
+/** Merge overlapping [start,end) intervals in ms. */
+function mergeIntervalsMs(intervals: [number, number][]): [number, number][] {
+  if (intervals.length === 0) return [];
+  const sorted = [...intervals].sort((a, b) => a[0] - b[0]);
+  const out: [number, number][] = [];
+  let cs = sorted[0][0];
+  let ce = sorted[0][1];
+  for (let i = 1; i < sorted.length; i++) {
+    const [s, e] = sorted[i];
+    if (s <= ce) ce = Math.max(ce, e);
+    else {
+      out.push([cs, ce]);
+      cs = s;
+      ce = e;
+    }
+  }
+  out.push([cs, ce]);
+  return out;
+}
+
+/** Sum ms of actual intervals that fall inside merged planned intervals. */
+function actualInsidePlannedMs(
+  actual: [number, number][],
+  planned: [number, number][],
+): number {
+  if (actual.length === 0 || planned.length === 0) return 0;
+  const merged = mergeIntervalsMs(planned);
+  let sum = 0;
+  for (const [as, ae] of actual) {
+    for (const [ps, pe] of merged) {
+      sum += overlapMs(as, ae, ps, pe);
+    }
+  }
+  return sum;
+}
+
+type HabitType = { id: string; name: string; color: string | null; track_in_streaks: boolean };
 type TaskType = { id: string; name: string; color: string | null };
 type Task = { id: string; points: number; task_type_id: string | null };
 
@@ -45,6 +88,8 @@ type ActualTaskRow = {
 type ActualHabitRow = {
   scheduled_date: string;
   habit_type_id: string;
+  start_at: string;
+  end_at: string;
 };
 
 export async function GET(request: NextRequest) {
@@ -66,6 +111,7 @@ export async function GET(request: NextRequest) {
       { data: actualHabitsRaw, error: ahErr },
       { data: habitTypesRaw, error: htErr },
       { data: taskTypesRaw, error: ttErr },
+      { data: dailyGoalsRaw, error: dgErr },
     ] = await Promise.all([
       supabase
         .from("tasks")
@@ -87,11 +133,12 @@ export async function GET(request: NextRequest) {
         .select("scheduled_date, habit_type_id, start_at, end_at")
         .gte("scheduled_date", start)
         .lte("scheduled_date", end),
-      supabase.from("habit_types").select("id, name, color"),
+      supabase.from("habit_types").select("id, name, color, track_in_streaks"),
       supabase.from("task_types").select("id, name, color"),
+      supabase.from("daily_goals").select("date, done").gte("date", start).lte("date", end),
     ]);
 
-    for (const err of [tErr, tbErr, atErr, ahErr, htErr, ttErr]) {
+    for (const err of [tErr, tbErr, atErr, ahErr, htErr, ttErr, dgErr]) {
       if (err) throw new Error(err.message);
     }
 
@@ -99,8 +146,16 @@ export async function GET(request: NextRequest) {
     const timeBlocks = (timeBlocksRaw ?? []) as TimeBlockRow[];
     const actualTasks = (actualTasksRaw ?? []) as ActualTaskRow[];
     const actualHabits = (actualHabitsRaw ?? []) as ActualHabitRow[];
-    const habitTypes = (habitTypesRaw ?? []) as HabitType[];
+    const habitTypes = ((habitTypesRaw ?? []) as (HabitType & { track_in_streaks?: boolean })[]).map(
+      (h) => ({
+        id: h.id,
+        name: h.name,
+        color: h.color,
+        track_in_streaks: h.track_in_streaks !== false,
+      }),
+    );
     const taskTypes = (taskTypesRaw ?? []) as TaskType[];
+    const dailyGoalsRows = (dailyGoalsRaw ?? []) as { date: string; done: boolean }[];
 
     const taskById = new Map(tasks.map((t) => [t.id, t]));
     const habitTypeById = new Map(habitTypes.map((h) => [h.id, h]));
@@ -175,7 +230,7 @@ export async function GET(request: NextRequest) {
       const hours = +(focusHoursByDay.get(date) ?? 0).toFixed(2);
       let level: 0 | 1 | 2 | 3 | 4;
       if (hours === 0) level = 0;
-      else if (hours < 2) level = 1;
+      else if (hours < 2.5) level = 1;
       else if (hours < 4) level = 2;
       else if (hours < 6) level = 3;
       else level = 4;
@@ -198,6 +253,56 @@ export async function GET(request: NextRequest) {
       plannedHours: +(plannedTaskHoursByDay.get(date) ?? 0).toFixed(2),
       actualHours: +(focusHoursByDay.get(date) ?? 0).toFixed(2),
     }));
+
+    /* ---------- 4b) Daily goals + routine adherence per day ---------- */
+    const goalByDate = new Map(dailyGoalsRows.map((g) => [g.date, g.done]));
+    const dailyGoalsByDay = days.map((date) => ({
+      date,
+      hasGoal: goalByDate.has(date),
+      done: goalByDate.get(date) ?? false,
+    }));
+
+    const plannedTaskIntervalsByDay = new Map<string, [number, number][]>();
+    for (const tb of timeBlocks) {
+      if (tb.entry_type !== "task") continue;
+      if (!plannedTaskIntervalsByDay.has(tb.scheduled_date)) {
+        plannedTaskIntervalsByDay.set(tb.scheduled_date, []);
+      }
+      plannedTaskIntervalsByDay.get(tb.scheduled_date)!.push([
+        new Date(tb.start_at).getTime(),
+        new Date(tb.end_at).getTime(),
+      ]);
+    }
+    const actualIntervalsByDay = new Map<string, [number, number][]>();
+    for (const a of actualTasks) {
+      if (!actualIntervalsByDay.has(a.scheduled_date)) actualIntervalsByDay.set(a.scheduled_date, []);
+      actualIntervalsByDay.get(a.scheduled_date)!.push([
+        new Date(a.start_at).getTime(),
+        new Date(a.end_at).getTime(),
+      ]);
+    }
+
+    const routineByDay = days.map((date) => {
+      const plannedH = plannedTaskHoursByDay.get(date) ?? 0;
+      const actualH = focusHoursByDay.get(date) ?? 0;
+      const plannedIntervals = plannedTaskIntervalsByDay.get(date) ?? [];
+      const actIntervals = actualIntervalsByDay.get(date) ?? [];
+      let totalActualMs = 0;
+      for (const [as, ae] of actIntervals) totalActualMs += Math.max(0, ae - as);
+      const insideMs =
+        plannedIntervals.length > 0 && actIntervals.length > 0
+          ? actualInsidePlannedMs(actIntervals, plannedIntervals)
+          : 0;
+      const hoursRatio = plannedH > 0 ? Math.min(1, actualH / plannedH) : 0;
+      const timeWindowScore = totalActualMs > 0 ? insideMs / totalActualMs : 0;
+      const routineScore = +(hoursRatio * timeWindowScore * 100).toFixed(1);
+      return {
+        date,
+        hoursScore: +(hoursRatio * 100).toFixed(1),
+        timeWindowScore: +(timeWindowScore * 100).toFixed(1),
+        routineScore,
+      };
+    });
 
     /* ---------- 5) Real hours distribution by task_type ---------- */
     const hoursByTaskType = new Map<string | null, number>();
@@ -229,6 +334,7 @@ export async function GET(request: NextRequest) {
 
     const todayStr = new Date().toISOString().slice(0, 10);
     const habitStreaks = habitTypes
+      .filter((h) => h.track_in_streaks)
       .map((h) => {
         const set = daysByHabit.get(h.id) ?? new Set<string>();
         let current = 0;
@@ -260,14 +366,78 @@ export async function GET(request: NextRequest) {
       .filter((r) => r.bestStreak > 0 || r.currentStreak > 0)
       .sort((a, b) => b.currentStreak - a.currentStreak || b.bestStreak - a.bestStreak);
 
+    const streakTracking = {
+      total: habitTypes.length,
+      tracked: habitTypes.filter((h) => h.track_in_streaks).length,
+    };
+
+    /* ---------- 7) Habit daily presence heatmap ---------- */
+    const habitDailyMap = habitTypes.map((h) => {
+      const doneSet = daysByHabit.get(h.id) ?? new Set<string>();
+      return {
+        id: h.id,
+        name: h.name,
+        color: h.color,
+        byDay: days.map((date) => ({ date, done: doneSet.has(date) })),
+      };
+    });
+
+    /* ---------- 8) Habit cross chart: hours per habit-type per day ---------- */
+    const habitHoursByTypeByDay = new Map<string, Map<string, number>>();
+    for (const ah of actualHabits) {
+      if (!habitHoursByTypeByDay.has(ah.habit_type_id)) {
+        habitHoursByTypeByDay.set(ah.habit_type_id, new Map());
+      }
+      const byDay = habitHoursByTypeByDay.get(ah.habit_type_id)!;
+      byDay.set(
+        ah.scheduled_date,
+        (byDay.get(ah.scheduled_date) ?? 0) + hoursBetween(ah.start_at, ah.end_at),
+      );
+    }
+
+    const habitCrossData = [
+      // Special "work" series built from already-computed focusHoursByDay
+      {
+        id: "__work__",
+        name: "Trabajo",
+        color: "#8b5cf6",
+        isWork: true,
+        byDay: days.map((date) => ({
+          date,
+          hours: +(focusHoursByDay.get(date) ?? 0).toFixed(2),
+        })),
+      },
+      // One entry per habit type that has at least one actual block in range
+      ...habitTypes
+        .filter((h) => habitHoursByTypeByDay.has(h.id))
+        .map((h) => {
+          const byDay = habitHoursByTypeByDay.get(h.id)!;
+          return {
+            id: h.id,
+            name: h.name,
+            color: h.color,
+            isWork: false,
+            byDay: days.map((date) => ({
+              date,
+              hours: +(byDay.get(date) ?? 0).toFixed(2),
+            })),
+          };
+        }),
+    ];
+
     return NextResponse.json({
       range: { start, end },
       pointsByDay,
       habitAdherence,
       focusHeatmap,
       hoursByDay,
+      dailyGoalsByDay,
+      routineByDay,
       taskTypeDistribution,
       habitStreaks,
+      streakTracking,
+      habitCrossData,
+      habitDailyMap,
     });
   } catch (error) {
     return apiError(error);
