@@ -31,7 +31,7 @@ export const DAILY_SUMMARY_REMINDER_HOUR_VET = 14;
  * Minuto 0–59 en esa misma zona. Con cron solo cada hora (~:00 UTC) suele pegar a minuto 0 VET;
  * si pones otro minuto, usa `CRON_EVERY_MINUTE = true` + `* * * * *` en vercel o `DEV_CRON_INTERVAL_MS = 60_000`.
  */
-export const DAILY_SUMMARY_REMINDER_MINUTE_VET = 4;
+export const DAILY_SUMMARY_REMINDER_MINUTE_VET = 8;
 
 /**
  * Si el cron pega cada minuto pero quieres lógica solo cada hora (horario UTC).

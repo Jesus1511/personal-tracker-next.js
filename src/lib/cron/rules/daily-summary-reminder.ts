@@ -51,7 +51,7 @@ export const dailySummaryReminderRule: HourlyNotificationRule = {
 
     await handleSendCustomNotification({
       title: "Revisa tus métricas de hoy",
-      body: "¿Cómo fue el día? Escribe tu resumen de 200 caracteres en métricas.",
+      body: "🟣 ¿Cómo fue el día? Escribe tu resumen de 200 caracteres en métricas.",
       data: { type: "daily_summary_reminder", date: todayDate },
       collapseId: `daily-summary-${todayDate}`,
     });
