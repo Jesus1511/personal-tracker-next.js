@@ -1,3 +1,7 @@
+import {
+  DAILY_SUMMARY_REMINDER_HOUR_VET,
+  DAILY_SUMMARY_REMINDER_MINUTE_VET,
+} from "@/lib/cron/config";
 import { type HourlyNotificationRule } from "@/lib/cron/hourly-notifications";
 
 import { handleSendCustomNotification } from "@/lib/push/handle-send-custom-notification";
@@ -26,7 +30,7 @@ function getCaracasClock(now: Date): { hour: number; minute: number } {
   return { hour: h, minute: m };
 }
 
-/** 21:00 VET, primeros 15 min de la hora — recordatorio de resumen en métricas. */
+/** Hora y minuto VET en `lib/cron/config.ts`. */
 export const dailySummaryReminderRule: HourlyNotificationRule = {
   id: "daily-summary-reminder",
   match: () => false,
@@ -34,11 +38,13 @@ export const dailySummaryReminderRule: HourlyNotificationRule = {
 
   async customRunner(now: Date) {
     const { hour, minute } = getCaracasClock(now);
-    if (hour !== 21) {
-      return { skipped: "not-21h-caracas" };
-    }
-    if (minute >= 15) {
-      return { skipped: "not-within-first-15min-of-hour-caracas" };
+    if (
+      hour !== DAILY_SUMMARY_REMINDER_HOUR_VET ||
+      minute !== DAILY_SUMMARY_REMINDER_MINUTE_VET
+    ) {
+      return {
+        skipped: `not-summary-clock-caracas-want-${DAILY_SUMMARY_REMINDER_HOUR_VET}:${String(DAILY_SUMMARY_REMINDER_MINUTE_VET).padStart(2, "0")}`,
+      };
     }
 
     const todayDate = plannerDate(now);

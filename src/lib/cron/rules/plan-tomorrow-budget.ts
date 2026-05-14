@@ -50,7 +50,7 @@ async function countTimeBlocksOnDate(scheduledDate: string): Promise<number> {
  * Frentes (Caracas, VET):
  * - 9:00–10:59: recordatorio “día siguiente” (sin bloques) — 2 h de ventana (el cron rara vez pega a :00).
  * - 20:00–23:59: sin bloques → avisos 20, 21, 22 y 23 h; con bloques: solo 20 h.
- * En cada franja, el crono **no** fía al minuto 0: se acepta el intento en los **primeros 15 min** de esa hora.
+ * Una ejecución por hora UTC (Vercel); la hora local VET basta para acotar la franja.
  * `dateLabel`: solo el día a mostrar en el push, no el horario del cron.
  */
 export const planTomorrowBudgetRule: HourlyNotificationRule = {
@@ -59,14 +59,11 @@ export const planTomorrowBudgetRule: HourlyNotificationRule = {
   buildNotification: () => ({ body: "" }),
 
   async customRunner(now: Date) {
-    const { hour, minute } = getCaracasClock(now);
+    const { hour } = getCaracasClock(now);
     const inMorning9to10 = hour === 9 || hour === 10; // 9:00–10:59
     const inEvening = hour >= 20 && hour <= 23; // 20:00–23:59
     if (!inMorning9to10 && !inEvening) {
       return { skipped: "outside-9-10-or-20-23-venezuela" };
-    }
-    if (minute >= 15) {
-      return { skipped: "not-within-first-15min-of-hour-caracas" };
     }
 
     const tomorrow = tomorrowPlannerDateFromNow(now);

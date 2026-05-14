@@ -19,8 +19,8 @@ function verifyCronRequest(request: NextRequest) {
 }
 
 /**
- * Vercel Cron: GET cada hora (UTC, minuto 0). Requiere `CRON_SECRET` y
- * `Authorization: Bearer <CRON_SECRET>`.
+ * Vercel Cron: GET cada hora (UTC). Requiere `CRON_SECRET` y
+ * `Authorization: Bearer <CRON_SECRET>` (Vercel lo inyecta si está definido).
  */
 export async function GET(request: NextRequest) {
   const auth = verifyCronRequest(request);

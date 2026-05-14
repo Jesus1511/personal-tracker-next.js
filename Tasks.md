@@ -34,3 +34,21 @@
 
 
 
+
+
+En metricas especificamente te detallo todo lo que falta
+- el mismo seleccionador de lapso de tiempo qeu en la web
+- asegurarte que sean las 9 para el como te fue hoy
+- eliminar adherencia de habitos y los otros, la graficas deben ser exactamente las mismas que hay en web en el mismo orden
+- no hay de L -> D ni los espacios vacios en a primera fila de los mapas de calor
+
+En el analisis con Ia se que te falto todo, necesito lo sigueinte que ya esta en la web
+- las tablas seleccionables deben ser la mismas que la web
+- te falta el selector de modelo de ia
+- te falta el json ejemplo
+- probablemente te falta el chat continuable con contexto y posibilidad de volver a enviar el json como en la web
+- eliminar el prompt harcodeado y colocar de primero el prompt escrito por usuario, para limitar el heigth maximo de cada prompt del usaurio y que el json no se coma toda la pantall
+
+busca cada uno de estos en la web uno por uno antes de implementarlo, para que lo hagas lo mas parecido posible
+
+
