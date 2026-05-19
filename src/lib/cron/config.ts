@@ -1,10 +1,9 @@
 /**
  * Ajusta aquí (no env).
  *
- * Cada minuto: `true` y en `vercel.json` cron schedule `* * * * *`.
- * Cada hora: `false` y schedule `0 * * * *` (Vercel invoca 1×/h).
- * Si dejas `* * * * *` con `CRON_EVERY_MINUTE` false, la ruta HTTP ignora ticks
- * salvo los primeros ~20 min de cada hora UTC (tolerancia a retrasos de Vercel).
+ * Cada minuto (solo pruebas): `true` y en `vercel.json` schedule `* * * * *`.
+ * Producción: `false` y schedule `0 * * * *`; las reglas solo corren al inicio
+ * de cada hora en America/Caracas (ver `shouldRunCronNotificationLogic`).
  */
 export const CRON_EVERY_MINUTE = false;
 
@@ -33,14 +32,13 @@ export const DAILY_SUMMARY_REMINDER_HOUR_VET = 22;
  */
 export const DAILY_SUMMARY_REMINDER_MINUTE_VET = 0;
 
+import { isPlannerHourlyTick } from "@/lib/cron/venezuela-time";
+
 /**
- * Si el cron pega cada minuto pero quieres lógica solo cada hora (horario UTC).
- * En Vercel la invocación a veces llega varios minutos después del :00 UTC;
- * si exigimos minuto === 0 nunca corren las reglas (incl. hora Venezuela).
+ * Lógica de notificaciones solo al inicio de cada hora en America/Caracas
+ * (tolerancia ~15 min por retrasos de Vercel o timer local).
  */
 export function shouldRunCronNotificationLogic(now: Date): boolean {
   if (CRON_EVERY_MINUTE) return true;
-  // Sin VERCEL (curl/systemd a tu VM): cualquier minuto UTC vale.
-  if (!process.env.VERCEL) return true;
-  return now.getUTCMinutes() < 20;
+  return isPlannerHourlyTick(now);
 }

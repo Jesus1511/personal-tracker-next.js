@@ -1,32 +1,8 @@
 import { getSupabaseAdminClient } from "@/lib/supabase/server";
 import { type HourlyNotificationRule } from "@/lib/cron/hourly-notifications";
+import { getCaracasClock, PLANNER_TZ, plannerDate } from "@/lib/cron/venezuela-time";
 
 import { handleSendCustomNotification } from "@/lib/push/handle-send-custom-notification";
-
-const PLANNER_TZ = "America/Caracas";
-
-function plannerDate(d: Date): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: PLANNER_TZ,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(d);
-}
-
-/** Reloj local Caracas. */
-function getCaracasClock(now: Date): { hour: number; minute: number } {
-  const dtf = new Intl.DateTimeFormat("en-GB", {
-    timeZone: PLANNER_TZ,
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-  const parts = dtf.formatToParts(now);
-  const h = parseInt(parts.find((p) => p.type === "hour")?.value ?? "0", 10);
-  const m = parseInt(parts.find((p) => p.type === "minute")?.value ?? "0", 10);
-  return { hour: h, minute: m };
-}
 
 /**
  * "Mañana" = día calendario siguiente al de hoy (VET). ~+25h basta en Venezuela (sin cambio de DST).

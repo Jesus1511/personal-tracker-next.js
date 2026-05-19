@@ -69,12 +69,14 @@ export async function register() {
   const everySec = DEV_CRON_INTERVAL_MS / 1000;
   const run = async () => {
     try {
+      const result = await runHourlyNotificationCron(new Date());
+      if (result.skipped === "cron-tick") return;
       console.log(
-        "[cron/notifications] tick",
+        "[cron/notifications] ran",
         new Date().toISOString(),
-        `(dev cada ${everySec}s; prod HTTP /api/cron/hourly según vercel.json)`,
+        `(timer cada ${everySec}s; reglas solo inicio de hora VET)`,
+        result,
       );
-      await runHourlyNotificationCron(new Date());
     } catch (e) {
       console.error("[cron/notifications] tick failed", e);
     }

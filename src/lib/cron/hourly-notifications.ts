@@ -1,3 +1,4 @@
+import { shouldRunCronNotificationLogic } from "@/lib/cron/config";
 import {
   handleSendCustomNotification,
   type SendCustomNotificationInput,
@@ -70,6 +71,7 @@ export type HourlyCronRuleRun = {
 export type HourlyCronRunResult = {
   context: HourlyCronContext;
   rules: HourlyCronRuleRun[];
+  skipped?: "cron-tick";
 };
 
 /**
@@ -80,6 +82,9 @@ export async function runHourlyNotificationCron(
   now = new Date(),
 ): Promise<HourlyCronRunResult> {
   const context = buildContext(now);
+  if (!shouldRunCronNotificationLogic(now)) {
+    return { context, rules: [], skipped: "cron-tick" };
+  }
   const rules: HourlyCronRuleRun[] = [];
 
   for (const rule of hourlyNotificationRules) {

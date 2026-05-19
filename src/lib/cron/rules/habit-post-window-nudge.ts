@@ -1,5 +1,6 @@
 import { getSupabaseAdminClient } from "@/lib/supabase/server";
 import { type HourlyNotificationRule } from "@/lib/cron/hourly-notifications";
+import { plannerDate } from "@/lib/cron/venezuela-time";
 
 import { handleSendCustomNotification } from "@/lib/push/handle-send-custom-notification";
 
@@ -40,6 +41,7 @@ export const habitPostWindowNudgeRule: HourlyNotificationRule = {
   buildNotification: () => ({ body: "" }),
 
   async customRunner(now: Date) {
+    const today = plannerDate(now);
     const tAfter = new Date(now.getTime() - NUDGE_AFTER_END_MS).toISOString();
     const tWindowStart = new Date(now.getTime() - NUDGE_AFTER_END_MS - NUDGE_WINDOW_MS).toISOString();
 
@@ -48,6 +50,7 @@ export const habitPostWindowNudgeRule: HourlyNotificationRule = {
       .from("time_blocks")
       .select("id, end_at, scheduled_date, habit_type_id, habit_type:habit_types(name)")
       .eq("entry_type", "habit")
+      .eq("scheduled_date", today)
       .gte("end_at", tWindowStart)
       .lte("end_at", tAfter);
 
