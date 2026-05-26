@@ -5,6 +5,7 @@ export const CLAUDE_MODEL_OPTIONS: readonly { id: string; label: string }[] = [
   { id: "claude-sonnet-4-6", label: "Sonnet 4.6" },
   { id: "claude-haiku-4-5", label: "Haiku 4.5" },
 ] as const;
+//h
 
 export const DEFAULT_CLAUDE_MODEL_ID = "claude-sonnet-4-6";
 
