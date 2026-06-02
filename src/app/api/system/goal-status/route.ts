@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { plannerDate } from "@/lib/cron/venezuela-time";
 import { normalizeDate } from "@/lib/planner/date";
 import { apiError } from "@/lib/planner/http";
 import { getSupabaseAdminClient } from "@/lib/supabase/server";
@@ -25,7 +26,9 @@ export async function GET(request: NextRequest) {
     }
 
     const { searchParams } = request.nextUrl;
-    const date = normalizeDate(searchParams.get("date"));
+    const date = searchParams.get("date")
+      ? normalizeDate(searchParams.get("date"))
+      : plannerDate(new Date());
 
     const supabase = getSupabaseAdminClient();
     const { data, error } = await supabase
