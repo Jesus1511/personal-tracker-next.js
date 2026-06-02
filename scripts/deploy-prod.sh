@@ -43,8 +43,13 @@ else
 fi
 echo "--- npm run build ---"
 npm run build
-echo "--- pm2 restart ---"
-pm2 restart next
+echo "--- pm2 restart or start ---"
+if pm2 describe next >/dev/null 2>&1; then
+  pm2 restart next --update-env
+else
+  pm2 start npm --name next -- start
+  pm2 save
+fi
 echo "--- pm2 list ---"
 pm2 ls
 echo "--- pm2 logs next (last 120) ---"
