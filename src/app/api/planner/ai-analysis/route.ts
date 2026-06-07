@@ -1,14 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import {
-  attachAnalysisLookupCatalogs,
-  expandTablesForFetch,
-  fetchAnalysisTableRows,
-  resolveAppliedRoutineIdsForAnalysis,
-} from "@/lib/gemini/fetch-analysis-table-rows";
-import { generateContent } from "@/lib/gemini/client";
+import { runWithTools } from "@/lib/gemini/client";
 import { parseClaudeModelFromBody } from "@/lib/gemini/claude-models";
-import { buildCustomPrompt } from "@/lib/gemini/prompts";
+import { PLANNER_TOOLS, executeDbTool } from "@/lib/gemini/db-tools";
+import { buildToolSystemPrompt } from "@/lib/gemini/prompts";
 import { filterAnalyzableTableKeys } from "@/lib/gemini/types";
 import { normalizeDate } from "@/lib/planner/date";
 import { apiError } from "@/lib/planner/http";
@@ -36,36 +31,31 @@ export async function POST(request: NextRequest) {
     }
 
     const supabase = getSupabaseAdminClient();
-    const appliedRoutineIds = await resolveAppliedRoutineIdsForAnalysis(
-      supabase,
+    const system = buildToolSystemPrompt(
+      { start: dateStart, end: dateEnd },
       tables,
-      dateStart,
-      dateEnd,
+      customPrompt,
     );
-    const fetchKeys = expandTablesForFetch(tables);
-    const tableData: Record<string, unknown[]> = {};
-    await Promise.all(
-      fetchKeys.map(async (t) => {
-        tableData[t] = await fetchAnalysisTableRows(
-          supabase,
-          t,
-          dateStart,
-          dateEnd,
-          { appliedRoutineIds },
-        );
-      }),
-    );
-    await attachAnalysisLookupCatalogs(supabase, tableData);
-
-    const range = { start: dateStart, end: dateEnd };
-    const prompt = buildCustomPrompt(tableData, range, customPrompt);
 
     let responseText: string | null = null;
     let status: "completed" | "failed" = "completed";
     let failureReason: string | null = null;
 
     try {
-      const result = await generateContent({ prompt, model });
+      const result = await runWithTools({
+        system,
+        messages: [
+          {
+            role: "user",
+            content:
+              customPrompt ||
+              "Analiza estos datos y ofrece un resumen breve en español con los hallazgos más relevantes y, si aplica, 2–3 recomendaciones concretas.",
+          },
+        ],
+        tools: PLANNER_TOOLS,
+        toolExecutor: (name, input) => executeDbTool(supabase, tables, name, input),
+        model,
+      });
       responseText = result.text;
     } catch (err) {
       status = "failed";
@@ -80,7 +70,7 @@ export async function POST(request: NextRequest) {
         date_end: dateEnd,
         tables_analyzed: tables,
         prompt_type: "custom",
-        prompt_text: prompt,
+        prompt_text: system,
         response_text: responseText,
         status,
         failure_reason: failureReason,

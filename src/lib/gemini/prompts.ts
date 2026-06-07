@@ -4,7 +4,8 @@ import {
   calendarDayForRow,
   isDayBucketTableListedSeparately,
 } from "./analysis-table-config";
-import type { DateRange } from "./types";
+import type { AnalyzableTable, DateRange } from "./types";
+import { ANALYZABLE_TABLES } from "./types";
 
 type TableData = Record<string, unknown[]>;
 type Row = Record<string, unknown>;
@@ -321,3 +322,37 @@ export function buildCustomPrompt(data: TableData, range: DateRange, userPrompt:
     buildDataContext(data, range)
   );
 }
+
+/**
+ * System prompt for tool-based flow. Claude queries the DB on demand instead
+ * of receiving a pre-built JSON blob.
+ */
+export function buildToolSystemPrompt(
+  range: DateRange,
+  tables: AnalyzableTable[],
+  userInstructions?: string,
+): string {
+  const tableList = tables
+    .map((k) => {
+      const label = ANALYZABLE_TABLES.find((t) => t.key === k)?.label ?? k;
+      return `- \`${k}\` (${label})`;
+    })
+    .join("\n");
+
+  const instructions = userInstructions?.trim()
+    ? `\n\n## Instrucciones del usuario\n${userInstructions.trim()}`
+    : "";
+
+  return (
+    "Eres un asistente de productividad personal. Responde siempre en español. " +
+    "Usa Markdown para formatear tu respuesta. Sé conciso pero completo.\n\n" +
+    `## Contexto\n` +
+    `Rango de fechas: ${range.start} al ${range.end}.\n` +
+    `Tablas disponibles para consultar:\n${tableList}\n\n` +
+    "Usa las herramientas `query_table` y `query_lookup_catalogs` para obtener los datos " +
+    "que necesites antes de responder. Los horarios de bloques están en zona America/Caracas. " +
+    "IDs de tipos se resuelven con `query_lookup_catalogs`." +
+    instructions
+  );
+}
+

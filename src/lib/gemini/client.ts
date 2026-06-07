@@ -3,6 +3,20 @@ import Anthropic from "@anthropic-ai/sdk";
 import { CLAUDE_MODEL_FALLBACK_CHAIN } from "./claude-models";
 import type { ClaudeRequest, ClaudeResponse } from "./types";
 
+export type ToolExecutor = (
+  toolName: string,
+  input: Record<string, unknown>,
+) => Promise<unknown>;
+
+export type RunWithToolsRequest = {
+  system: string;
+  messages: Anthropic.MessageParam[];
+  tools: Anthropic.Tool[];
+  toolExecutor: ToolExecutor;
+  model?: string;
+  maxTokens?: number;
+};
+
 export type ClaudeStreamRequest = {
   system: string;
   messages: Anthropic.MessageParam[];
@@ -118,6 +132,101 @@ export async function generateContent(req: ClaudeRequest): Promise<ClaudeRespons
     const msg = err instanceof Error ? err.message : "Claude request failed";
     throw new Error(`Claude API error: ${msg}`);
   }
+}
+
+/**
+ * Agentic loop: sends messages to Claude with tools, executes tool calls until
+ * stop_reason === "end_turn", then returns the final text response.
+ */
+export async function runWithTools(
+  req: RunWithToolsRequest,
+): Promise<ClaudeResponse> {
+  const client = getClaudeClient();
+  const messages: Anthropic.MessageParam[] = [...req.messages];
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+
+  const candidates = getClaudeModelCandidates(req.model);
+  const MAX_ITERATIONS = 10;
+
+  let chosenModel: string | null = null;
+  let firstResponse: Anthropic.Message | null = null;
+  let lastErr: unknown = null;
+
+  for (const model of candidates) {
+    try {
+      logClaudeAttempt("tools", model);
+      firstResponse = await client.messages.create({
+        model,
+        max_tokens: req.maxTokens ?? 4096,
+        system: req.system,
+        messages,
+        tools: req.tools,
+      });
+      chosenModel = model;
+      break;
+    } catch (err: unknown) {
+      lastErr = err;
+      logClaudeError("tools", model, err);
+      if (!isPermissionError(err)) throw err;
+    }
+  }
+  if (!chosenModel || !firstResponse) throw lastErr ?? new Error("No usable Claude model found for tool use.");
+
+  for (let i = 0; i < MAX_ITERATIONS; i++) {
+    const response = i === 0 ? firstResponse : await client.messages.create({
+      model: chosenModel,
+      max_tokens: req.maxTokens ?? 4096,
+      system: req.system,
+      messages,
+      tools: req.tools,
+    });
+
+    totalInputTokens += response.usage.input_tokens;
+    totalOutputTokens += response.usage.output_tokens;
+
+    messages.push({ role: "assistant", content: response.content });
+
+    if (response.stop_reason === "end_turn") {
+      const text = response.content
+        .filter((b): b is Anthropic.TextBlock => b.type === "text")
+        .map((b) => b.text)
+        .join("");
+      return { text, promptTokens: totalInputTokens, responseTokens: totalOutputTokens };
+    }
+
+    if (response.stop_reason === "tool_use") {
+      const toolResults: Anthropic.ToolResultBlockParam[] = [];
+      for (const block of response.content) {
+        if (block.type !== "tool_use") continue;
+        let result: unknown;
+        try {
+          result = await req.toolExecutor(
+            block.name,
+            block.input as Record<string, unknown>,
+          );
+        } catch (err: unknown) {
+          result = { error: err instanceof Error ? err.message : String(err) };
+        }
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: block.id,
+          content: JSON.stringify(result),
+        });
+      }
+      messages.push({ role: "user", content: toolResults });
+      continue;
+    }
+
+    // max_tokens or other stop
+    const text = response.content
+      .filter((b): b is Anthropic.TextBlock => b.type === "text")
+      .map((b) => b.text)
+      .join("");
+    return { text, promptTokens: totalInputTokens, responseTokens: totalOutputTokens };
+  }
+
+  throw new Error("runWithTools: exceeded max iterations without end_turn.");
 }
 
 /**

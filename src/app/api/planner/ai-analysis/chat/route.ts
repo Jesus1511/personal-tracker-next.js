@@ -1,18 +1,10 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { NextRequest } from "next/server";
 
-import { streamContent } from "@/lib/gemini/client";
+import { runWithTools } from "@/lib/gemini/client";
 import { parseClaudeModelFromBody } from "@/lib/gemini/claude-models";
-import {
-  attachAnalysisLookupCatalogs,
-  expandTablesForFetch,
-  fetchAnalysisTableRows,
-  resolveAppliedRoutineIdsForAnalysis,
-} from "@/lib/gemini/fetch-analysis-table-rows";
-import {
-  AI_CHAT_SYSTEM_SUFFIX,
-  buildChatSystemPromptFromData,
-} from "@/lib/gemini/prompts";
+import { PLANNER_TOOLS, executeDbTool } from "@/lib/gemini/db-tools";
+import { buildToolSystemPrompt } from "@/lib/gemini/prompts";
 import { filterAnalyzableTableKeys } from "@/lib/gemini/types";
 import { normalizeDate } from "@/lib/planner/date";
 import { apiError } from "@/lib/planner/http";
@@ -43,10 +35,6 @@ function sanitizeMessages(raw: unknown): Anthropic.MessageParam[] {
   return out;
 }
 
-const SYSTEM_PREFIX =
-  "Eres un asistente de productividad personal. Responde siempre en español. " +
-  "Usa Markdown para formatear tu respuesta. Sé conciso pero completo.\n\n";
-
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
@@ -57,7 +45,7 @@ export async function POST(request: NextRequest) {
       tables?: string[];
       messages?: unknown;
       model?: string;
-      sendJson?: boolean;
+      sendJson?: boolean; // kept for backward compat, ignored
     };
 
     const dateStart = normalizeDate(body.dateStart);
@@ -65,42 +53,29 @@ export async function POST(request: NextRequest) {
     const tables = filterAnalyzableTableKeys(body.tables ?? []);
     const messages = sanitizeMessages(body.messages);
     const model = parseClaudeModelFromBody(body.model);
-    const sendJson = body.sendJson === true;
 
-    let system: string;
-
-    if (sendJson) {
-      if (tables.length === 0) {
-        throw new Error("Selecciona al menos una tabla para analizar.");
-      }
-      const supabase = getSupabaseAdminClient();
-      const appliedRoutineIds = await resolveAppliedRoutineIdsForAnalysis(
-        supabase,
-        tables,
-        dateStart,
-        dateEnd,
-      );
-      const fetchKeys = expandTablesForFetch(tables);
-      const tableData: Record<string, unknown[]> = {};
-      await Promise.all(
-        fetchKeys.map(async (t) => {
-          tableData[t] = await fetchAnalysisTableRows(
-            supabase,
-            t,
-            dateStart,
-            dateEnd,
-            { appliedRoutineIds },
-          );
-        }),
-      );
-      await attachAnalysisLookupCatalogs(supabase, tableData);
-      const range = { start: dateStart, end: dateEnd };
-      system = buildChatSystemPromptFromData(tableData, range);
-    } else {
-      system = SYSTEM_PREFIX + AI_CHAT_SYSTEM_SUFFIX;
+    if (tables.length === 0) {
+      throw new Error("Selecciona al menos una tabla para analizar.");
     }
 
-    const stream = streamContent({ messages, system, model });
+    const supabase = getSupabaseAdminClient();
+    const system = buildToolSystemPrompt({ start: dateStart, end: dateEnd }, tables);
+
+    const result = await runWithTools({
+      system,
+      messages,
+      tools: PLANNER_TOOLS,
+      toolExecutor: (name, input) => executeDbTool(supabase, tables, name, input),
+      model,
+    });
+
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode(result.text));
+        controller.close();
+      },
+    });
 
     return new Response(stream, {
       headers: {
