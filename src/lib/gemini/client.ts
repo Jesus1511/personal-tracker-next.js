@@ -324,7 +324,7 @@ type ToolResult = { id: string; name: string; toolJson: string; input: Record<st
 async function processStream(
   stream: AsyncIterable<Anthropic.RawMessageStreamEvent>,
   emit: (chunk: string) => void,
-): Promise<{ stopReason: string | null; contentBlocks: Anthropic.ContentBlock[]; toolResults: ToolResult[] }> {
+): Promise<{ stopReason: string | null; contentBlocks: Anthropic.ContentBlockParam[]; toolResults: ToolResult[] }> {
   type AccumBlock =
     | { type: "text"; text: string }
     | { type: "tool_use"; id: string; name: string; inputJson: string; input: Record<string, unknown> };
@@ -361,7 +361,7 @@ async function processStream(
   }
 
   const sorted = [...blocksByIndex.entries()].sort(([a], [b]) => a - b).map(([, v]) => v);
-  const contentBlocks: Anthropic.ContentBlock[] = sorted.map((b) =>
+  const contentBlocks: Anthropic.ContentBlockParam[] = sorted.map((b) =>
     b.type === "text"
       ? { type: "text" as const, text: b.text }
       : { type: "tool_use" as const, id: b.id, name: b.name, input: b.input },
