@@ -1,85 +1,83 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { runWithTools } from "@/lib/gemini/client";
+import { streamWithToolsAgentic } from "@/lib/gemini/client";
 import { parseClaudeModelFromBody } from "@/lib/gemini/claude-models";
 import { PLANNER_TOOLS, executeDbTool } from "@/lib/gemini/db-tools";
 import { buildToolSystemPrompt } from "@/lib/gemini/prompts";
-import { filterAnalyzableTableKeys } from "@/lib/gemini/types";
-import { normalizeDate } from "@/lib/planner/date";
+import { ANALYZABLE_TABLE_KEYS } from "@/lib/gemini/types";
 import { apiError } from "@/lib/planner/http";
 import { getSupabaseAdminClient } from "@/lib/supabase/server";
+
+const TOOL_EVENT_RE = /\x01TOOL:[^\n]*\n/g;
 
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as {
-      dateStart?: string;
-      dateEnd?: string;
-      tables?: string[];
       promptType?: string;
       customPrompt?: string;
       model?: string;
     };
 
-    const dateStart = normalizeDate(body.dateStart);
-    const dateEnd = normalizeDate(body.dateEnd);
-    const tables = filterAnalyzableTableKeys(body.tables ?? []);
     const customPrompt = body.customPrompt?.trim() ?? "";
     const model = parseClaudeModelFromBody(body.model);
-
-    if (tables.length === 0) {
-      throw new Error("Selecciona al menos una tabla para analizar.");
-    }
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Caracas" });
 
     const supabase = getSupabaseAdminClient();
-    const system = buildToolSystemPrompt(
-      { start: dateStart, end: dateEnd },
-      tables,
-      customPrompt,
-    );
+    const system = buildToolSystemPrompt(customPrompt);
 
-    let responseText: string | null = null;
-    let status: "completed" | "failed" = "completed";
-    let failureReason: string | null = null;
+    const baseStream = streamWithToolsAgentic({
+      system,
+      messages: [
+        {
+          role: "user",
+          content:
+            customPrompt ||
+            "Analiza mis datos de esta semana y ofrece un resumen breve en español con los hallazgos más relevantes y, si aplica, 2–3 recomendaciones concretas.",
+        },
+      ],
+      tools: PLANNER_TOOLS,
+      toolExecutor: (name, input) => executeDbTool(supabase, name, input),
+      model,
+    });
 
-    try {
-      const result = await runWithTools({
-        system,
-        messages: [
-          {
-            role: "user",
-            content:
-              customPrompt ||
-              "Analiza estos datos y ofrece un resumen breve en español con los hallazgos más relevantes y, si aplica, 2–3 recomendaciones concretas.",
-          },
-        ],
-        tools: PLANNER_TOOLS,
-        toolExecutor: (name, input) => executeDbTool(supabase, tables, name, input),
-        model,
-      });
-      responseText = result.text;
-    } catch (err) {
-      status = "failed";
-      failureReason =
-        err instanceof Error ? err.message : "Unknown Claude error";
-    }
+    // Tee: one copy streams to client, one collects text for DB save
+    const [clientStream, saveStream] = baseStream.tee();
 
-    const { data, error } = await supabase
-      .from("ai_analyses")
-      .insert({
-        date_start: dateStart,
-        date_end: dateEnd,
-        tables_analyzed: tables,
-        prompt_type: "custom",
-        prompt_text: system,
-        response_text: responseText,
-        status,
-        failure_reason: failureReason,
-      })
-      .select("*")
-      .single();
+    void (async () => {
+      try {
+        const reader = saveStream.getReader();
+        const dec = new TextDecoder();
+        let raw = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          raw += dec.decode(value, { stream: true });
+        }
+        raw += dec.decode();
+        const responseText = raw.replace(TOOL_EVENT_RE, "").trim();
+        await supabase.from("ai_analyses").insert({
+          date_start: today,
+          date_end: today,
+          tables_analyzed: [...ANALYZABLE_TABLE_KEYS],
+          prompt_type: "custom",
+          prompt_text: system,
+          response_text: responseText,
+          status: "completed",
+          failure_reason: null,
+        });
+      } catch {
+        /* ignore background save errors */
+      }
+    })();
 
-    if (error) throw new Error(error.message);
-    return NextResponse.json({ analysis: data }, { status: 201 });
+    return new Response(clientStream, {
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        Vary: "Accept-Encoding",
+        "Cache-Control": "no-store, no-transform",
+        "X-Accel-Buffering": "no",
+      },
+    });
   } catch (error) {
     return apiError(error);
   }

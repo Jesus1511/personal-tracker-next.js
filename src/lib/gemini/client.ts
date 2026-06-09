@@ -230,6 +230,165 @@ export async function runWithTools(
 }
 
 /**
+ * Agentic streaming loop:
+ * - Runs tool calls (non-streaming) emitting \x01TOOL:{json}\n markers per call.
+ * - Streams the final Claude text response in real time.
+ * Protocol: lines starting with \x01TOOL: are tool-call events; everything else is markdown text.
+ */
+export function streamWithToolsAgentic(
+  req: RunWithToolsRequest,
+): ReadableStream<Uint8Array> {
+  const client = getClaudeClient();
+  const encoder = new TextEncoder();
+
+  return new ReadableStream({
+    async start(controller) {
+      const emit = (chunk: string) => {
+        try { controller.enqueue(encoder.encode(chunk)); } catch { /* closed */ }
+      };
+
+      try {
+        const messages: Anthropic.MessageParam[] = [...req.messages];
+        const candidates = getClaudeModelCandidates(req.model);
+        let chosenModel: string | null = null;
+
+        const MAX_TURNS = 10;
+        for (let turn = 0; turn < MAX_TURNS; turn++) {
+          // Resolve model on first turn; reuse on subsequent turns
+          if (turn === 0) {
+            let lastErr: unknown = null;
+            for (const model of candidates) {
+              try {
+                logClaudeAttempt("stream+tools", model);
+                // Attempt first streaming call to resolve model
+                const s = await client.messages.create({
+                  model,
+                  max_tokens: req.maxTokens ?? 4096,
+                  system: req.system,
+                  messages,
+                  tools: req.tools,
+                  stream: true,
+                });
+                chosenModel = model;
+                // Process this first stream
+                const { stopReason, contentBlocks, toolResults } =
+                  await processStream(s, emit);
+                messages.push({ role: "assistant", content: contentBlocks });
+                if (stopReason !== "tool_use") { return; }
+                for (const tr of toolResults) {
+                  emit(`\x01TOOL:${tr.toolJson}\n`);
+                  const result = await safeCallTool(req.toolExecutor, tr.name, tr.input);
+                  messages.push({ role: "user", content: [{ type: "tool_result", tool_use_id: tr.id, content: JSON.stringify(result) }] });
+                }
+                break;
+              } catch (err) {
+                lastErr = err;
+                logClaudeError("stream+tools", model, err);
+                if (!isPermissionError(err)) throw err;
+              }
+            }
+            if (!chosenModel) throw lastErr ?? new Error("No usable model for streaming tools.");
+            continue;
+          }
+
+          // Subsequent turns
+          const s = await client.messages.create({
+            model: chosenModel!,
+            max_tokens: req.maxTokens ?? 4096,
+            system: req.system,
+            messages,
+            tools: req.tools,
+            stream: true,
+          });
+          const { stopReason, contentBlocks, toolResults } = await processStream(s, emit);
+          messages.push({ role: "assistant", content: contentBlocks });
+          if (stopReason !== "tool_use") break;
+          for (const tr of toolResults) {
+            emit(`\x01TOOL:${tr.toolJson}\n`);
+            const result = await safeCallTool(req.toolExecutor, tr.name, tr.input);
+            messages.push({ role: "user", content: [{ type: "tool_result", tool_use_id: tr.id, content: JSON.stringify(result) }] });
+          }
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        emit(`\n\n**Error:** ${msg}`);
+      }
+
+      try { controller.close(); } catch { /* closed */ }
+    },
+  });
+}
+
+type ToolResult = { id: string; name: string; toolJson: string; input: Record<string, unknown> };
+
+async function processStream(
+  stream: AsyncIterable<Anthropic.RawMessageStreamEvent>,
+  emit: (chunk: string) => void,
+): Promise<{ stopReason: string | null; contentBlocks: Anthropic.ContentBlock[]; toolResults: ToolResult[] }> {
+  type AccumBlock =
+    | { type: "text"; text: string }
+    | { type: "tool_use"; id: string; name: string; inputJson: string; input: Record<string, unknown> };
+
+  const blocksByIndex = new Map<number, AccumBlock>();
+  let stopReason: string | null = null;
+
+  for await (const event of stream) {
+    if (event.type === "content_block_start") {
+      const b = event.content_block;
+      if (b.type === "text") {
+        blocksByIndex.set(event.index, { type: "text", text: "" });
+      } else if (b.type === "tool_use") {
+        blocksByIndex.set(event.index, { type: "tool_use", id: b.id, name: b.name, inputJson: "", input: {} });
+      }
+    } else if (event.type === "content_block_delta") {
+      const block = blocksByIndex.get(event.index);
+      if (!block) continue;
+      const d = event.delta;
+      if (d.type === "text_delta" && block.type === "text") {
+        block.text += d.text;
+        emit(d.text);
+      } else if (d.type === "input_json_delta" && block.type === "tool_use") {
+        block.inputJson += d.partial_json;
+      }
+    } else if (event.type === "content_block_stop") {
+      const block = blocksByIndex.get(event.index);
+      if (block?.type === "tool_use") {
+        try { block.input = JSON.parse(block.inputJson || "{}") as Record<string, unknown>; } catch { block.input = {}; }
+      }
+    } else if (event.type === "message_delta") {
+      stopReason = event.delta.stop_reason ?? null;
+    }
+  }
+
+  const sorted = [...blocksByIndex.entries()].sort(([a], [b]) => a - b).map(([, v]) => v);
+  const contentBlocks: Anthropic.ContentBlock[] = sorted.map((b) =>
+    b.type === "text"
+      ? { type: "text" as const, text: b.text }
+      : { type: "tool_use" as const, id: b.id, name: b.name, input: b.input },
+  );
+
+  const toolResults: ToolResult[] = sorted
+    .filter((b): b is Extract<AccumBlock, { type: "tool_use" }> => b.type === "tool_use")
+    .map((b) => ({
+      id: b.id,
+      name: b.name,
+      toolJson: JSON.stringify({ name: b.name, input: b.input }),
+      input: b.input,
+    }));
+
+  return { stopReason, contentBlocks, toolResults };
+}
+
+async function safeCallTool(
+  executor: ToolExecutor,
+  name: string,
+  input: Record<string, unknown>,
+): Promise<unknown> {
+  try { return await executor(name, input); }
+  catch (err) { return { error: err instanceof Error ? err.message : String(err) }; }
+}
+
+/**
  * Streams assistant text deltas as UTF-8 bytes (plain concatenation = Markdown).
  */
 export function streamContent(req: ClaudeStreamRequest): ReadableStream<Uint8Array> {

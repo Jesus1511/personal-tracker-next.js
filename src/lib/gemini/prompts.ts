@@ -4,7 +4,7 @@ import {
   calendarDayForRow,
   isDayBucketTableListedSeparately,
 } from "./analysis-table-config";
-import type { AnalyzableTable, DateRange } from "./types";
+import type { DateRange } from "./types";
 import { ANALYZABLE_TABLES } from "./types";
 
 type TableData = Record<string, unknown[]>;
@@ -327,17 +327,13 @@ export function buildCustomPrompt(data: TableData, range: DateRange, userPrompt:
  * System prompt for tool-based flow. Claude queries the DB on demand instead
  * of receiving a pre-built JSON blob.
  */
-export function buildToolSystemPrompt(
-  range: DateRange,
-  tables: AnalyzableTable[],
-  userInstructions?: string,
-): string {
-  const tableList = tables
-    .map((k) => {
-      const label = ANALYZABLE_TABLES.find((t) => t.key === k)?.label ?? k;
-      return `- \`${k}\` (${label})`;
-    })
-    .join("\n");
+export function buildToolSystemPrompt(userInstructions?: string): string {
+  const today = new Date().toLocaleDateString("en-CA", {
+    timeZone: "America/Caracas",
+  });
+  const tableList = ANALYZABLE_TABLES.map(
+    ({ key, label }) => `- \`${key}\` (${label})`,
+  ).join("\n");
 
   const instructions = userInstructions?.trim()
     ? `\n\n## Instrucciones del usuario\n${userInstructions.trim()}`
@@ -347,7 +343,7 @@ export function buildToolSystemPrompt(
     "Eres un asistente de productividad personal. Responde siempre en español. " +
     "Usa Markdown para formatear tu respuesta. Sé conciso pero completo.\n\n" +
     `## Contexto\n` +
-    `Rango de fechas: ${range.start} al ${range.end}.\n` +
+    `Hoy es ${today} (zona America/Caracas). Elige el rango de fechas que necesites según la pregunta.\n` +
     `Tablas disponibles para consultar:\n${tableList}\n\n` +
     "Usa las herramientas `query_table` y `query_lookup_catalogs` para obtener los datos " +
     "que necesites antes de responder. Los horarios de bloques están en zona America/Caracas. " +

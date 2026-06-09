@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { PlannerWidget } from "./planner-widget";
+
 import { localDateString } from "@/lib/planner/date";
 import { isTempId, makeTempId } from "@/lib/planner/temp-id";
 
@@ -1543,6 +1545,7 @@ export function PlannerPage() {
         </section>
         </>
       )}
+      <PlannerWidget />
     </main>
   );
 }

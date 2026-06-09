@@ -65,7 +65,6 @@ type ToolInput = Record<string, unknown>;
 
 export async function executeDbTool(
   supabase: SupabaseClient,
-  allowedTables: AnalyzableTable[],
   toolName: string,
   rawInput: ToolInput,
 ): Promise<unknown> {
@@ -75,13 +74,6 @@ export async function executeDbTool(
 
     if (!ANALYZABLE_TABLE_KEYS.has(table as AnalyzableTable)) {
       return { error: `Unknown table: ${table}` };
-    }
-
-    const allowed = new Set<string>(allowedTables);
-    if (!allowed.has(table)) {
-      return {
-        error: `Table "${table}" is not in the allowed list for this analysis.`,
-      };
     }
 
     const tableKey = table as AnalyzableTable;
